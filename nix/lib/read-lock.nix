@@ -33,11 +33,12 @@
   workspace ? ".",
   # cargo-purifier.lock.json, which may live outside `src`.
   lockFile ? (if workspace == "." then src else src + "/${workspace}") + "/cargo-purifier.lock.json",
+  # Cargo.lock: the copy in the workspace, or one kept outside `src` for a
+  # workspace that does not commit its own.
+  cargoLock ? (if workspace == "." then src else src + "/${workspace}") + "/Cargo.lock",
 }:
 let
   registryLib = import ./registry.nix { inherit lib; };
-
-  cargoLock = (if workspace == "." then src else src + "/${workspace}") + "/Cargo.lock";
   name = toString lockFile;
   rewrite = "Run `cargo-purifier lock` to write it again.";
 

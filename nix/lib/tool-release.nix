@@ -5,19 +5,20 @@
 #
 #   nix-build tool-release.nix --arg nixpkgs <path> --argstr system <system> \
 #     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json> \
-#     --argstr package <package>
+#     --arg cargoLock <Cargo.lock> --argstr package <package>
 {
   nixpkgs,
   system,
   src,
   lockFile,
+  cargoLock ? src + "/Cargo.lock",
   package,
 }:
 let
   pkgs = import nixpkgs { inherit system; };
   lock = import ./tool-lock.nix {
     inherit (pkgs) lib;
-    inherit src lockFile;
+    inherit src lockFile cargoLock;
   };
   project = import ./project.nix {
     inherit (pkgs)
@@ -28,7 +29,7 @@ let
       fetchurl
       fetchgit
       ;
-    inherit src lock;
+    inherit src cargoLock lock;
     inherit (lock) entries;
   };
 in

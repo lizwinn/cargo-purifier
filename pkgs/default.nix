@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: MIT
-{ callPackage, ... }:
+#
+# The `cargo-purifier` scope that the default package overlay adds to the
+# package set. `lib` here is the library this flake composes, which holds
+# the purifier library and readLock.
+{ callPackage, lib, ... }:
 let
   command = callPackage ./cargo-purifier { };
   cargo = callPackage ./cargo { inherit command; };
   rust-analyzer = callPackage ./rust-analyzer { inherit cargo; };
 in
 {
-  # cargo with the locked sources: the everyday loop.
+  # The builder of the purifier contract (nix/lib/build-cargo-project.nix).
+  buildCargoProject = callPackage ../nix/lib/build-cargo-project.nix {
+    inherit (lib) purifier;
+    inherit (lib.cargo-purifier) readLock;
+  };
+  # cargo with the locked sources: the development loop.
   inherit cargo;
   # rust-analyzer on the locked sources: the editor.
   inherit rust-analyzer;

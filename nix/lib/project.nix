@@ -33,6 +33,8 @@
   src,
   # The workspace root inside `src`, as readLock takes it.
   workspace ? ".",
+  # The Cargo.lock the builds use, which replaces any copy in `src`.
+  cargoLock ? (if workspace == "." then src else src + "/${workspace}") + "/Cargo.lock",
   # The lock in memory, without problems.
   lock,
   # The entries of `lock` for this system.
@@ -60,8 +62,8 @@ let
       fetchurl
       fetchgit
       entries
+      cargoLock
       ;
-    cargoLock = (if inWorkspace then src + "/${workspace}" else src) + "/Cargo.lock";
   };
 
   # Runs cargo in the workspace root, when it is not the root of `src`.
@@ -78,9 +80,15 @@ let
 
   # nixpkgs' cargo hooks find Cargo.lock in `cargoRoot`, and build and test
   # in `buildAndTestSubdir`.
+  # Every build works on the Cargo.lock this builder was given, which
+  # nixpkgs' cargoSetupHook then compares with the vendored one.
   common = {
     src = filteredSrc;
     cargoDeps = vendor;
+    prePatch = ''
+      cp ${cargoLock} ${lib.escapeShellArg workspace}/Cargo.lock
+      chmod u+w ${lib.escapeShellArg workspace}/Cargo.lock
+    '';
   }
   // lib.optionalAttrs inWorkspace {
     cargoRoot = workspace;

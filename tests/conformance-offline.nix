@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# conformance-offline: after `cargo-purifier prefetch`, the everyday loop
+# conformance-offline: after `cargo-purifier prefetch`, the development loop
 # and the editor work on the workspace fixture with no network, which the
 # sandbox has none of. The sandbox has no Nix daemon either, so a stand-in
 # nix-build answers the prefetch with what tool-prefetch.nix builds, and
@@ -42,7 +42,7 @@ pkgs.runCommand "conformance-offline" { nativeBuildInputs = [ cargo-purifier ]; 
   cargo-purifier prefetch
   test "$(readlink target/cargo-purifier/prefetch)" = ${prefetched}
 
-  # The everyday loop and the editor.
+  # The development loop and the editor.
   cargo build --quiet
   test "$(cargo run --quiet --package hello)" = "hello from 2 crates and 1.5"
   cargo test --quiet --workspace

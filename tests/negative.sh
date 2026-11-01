@@ -30,7 +30,7 @@ expect_failure() {
         overlays = [ flake.overlays.default ];
       };
     in
-    (pkgs.buildCargoProject { src = $work/$case; }).packages.hello"
+    (pkgs.cargo-purifier.buildCargoProject { src = $work/$case; }).packages.hello"
   if nix build --impure --no-link --expr "$expression" 2>"$work/$case.log"; then
     echo "FAIL $case: the build succeeded" >&2
     failures=$((failures + 1))

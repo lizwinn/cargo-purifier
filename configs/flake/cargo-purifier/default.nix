@@ -16,21 +16,25 @@
       inherit (libOverlays) default;
     };
 
-    # The packages are the `default` entry of this flake's package overlay
+    # The scope is the `default` entry of this flake's package overlay
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`.
+    # `overlays.default`. The `packages` output holds the derivations of
+    # the scope below, because the scope also holds the builder, which is a
+    # function.
     nixpkgs = {
-      packages.export.enabled = true;
+      packages.export.enabled = false;
     };
   };
 
   # `nix run github:nix-purifiers/cargo-purifier -- <command>` runs the
   # `cargo-purifier` command: lock, prefetch or publish.
   perSystem =
-    { config, ... }:
+    { config, pkgs, ... }:
     {
-      packages.default = config.packages.cargo-purifier;
+      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.cargo-purifier // {
+        default = config.packages.cargo-purifier;
+      };
     };
 
   partitionedAttrs.checks = "checks";
@@ -57,7 +61,7 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              inherit ((pkgs.extend self.overlays.default)) buildCargoProject;
+              inherit ((pkgs.extend self.overlays.default).cargo-purifier) buildCargoProject;
               inherit (self.lib.cargo-purifier) readLock;
               inherit (self.packages.${system}) cargo-purifier;
               inherit (inputs) ripgrep;

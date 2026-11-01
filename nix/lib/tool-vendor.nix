@@ -4,18 +4,20 @@
 # the nixpkgs the wrapper was built with.
 #
 #   nix-build tool-vendor.nix --arg nixpkgs <path> --argstr system <system> \
-#     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json>
+#     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json> \
+#     --arg cargoLock <Cargo.lock>
 {
   nixpkgs,
   system,
   src,
   lockFile,
+  cargoLock ? src + "/Cargo.lock",
 }:
 let
   pkgs = import nixpkgs { inherit system; };
   lock = import ./tool-lock.nix {
     inherit (pkgs) lib;
-    inherit src lockFile;
+    inherit src lockFile cargoLock;
   };
 in
 import ./vendor.nix {
@@ -26,6 +28,6 @@ import ./vendor.nix {
     fetchgit
     runCommand
     ;
-  cargoLock = src + "/Cargo.lock";
+  inherit cargoLock;
   inherit (lock) entries;
 }

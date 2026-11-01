@@ -9,7 +9,9 @@
 # too, with the tools.
 #
 # CARGO_PURIFIER_LOCKFILE names the purifier lockfile when it lives outside
-# the workspace. Every other command runs plain cargo, and so does every
+# the workspace, and CARGO_PURIFIER_TOOL_LOCKFILE names a Cargo.lock kept
+# outside the workspace, which the wrapper copies to the workspace root.
+# Every other command runs plain cargo, and so does every
 # command when the workspace has no purifier lockfile or CARGO_PURIFIER=0 is
 # set. A command that would need a download the lockfiles do not record
 # stops, and says which command fixes it: the lockfiles disagree, a manifest
@@ -21,6 +23,7 @@
   stdenv,
   writeShellApplication,
   coreutils,
+  diffutils,
   gnused,
   gnugrep,
   # nixpkgs' cargo and rustc, taken from `pkgs`: in this package scope
@@ -36,6 +39,7 @@ writeShellApplication {
   name = "cargo";
   runtimeInputs = [
     coreutils
+    diffutils
     gnused
     gnugrep
   ];
@@ -78,6 +82,13 @@ writeShellApplication {
 
     manifest=$("$real" locate-project --workspace --message-format plain 2>/dev/null) || exec "$real" "$@"
     root=''${manifest%/Cargo.toml}
+    # cargo reads Cargo.lock only from the workspace root, so a Cargo.lock
+    # kept outside the tree is copied there.
+    tool_lock=''${CARGO_PURIFIER_TOOL_LOCKFILE:-}
+    if [ -n "$tool_lock" ] && [ -f "$tool_lock" ] && ! cmp -s "$tool_lock" "$root/Cargo.lock"; then
+      cp "$tool_lock" "$root/Cargo.lock"
+      chmod u+w "$root/Cargo.lock"
+    fi
     lock=''${CARGO_PURIFIER_LOCKFILE:-$root/cargo-purifier.lock.json}
     if [ ! -f "$lock" ] || [ ! -f "$root/Cargo.lock" ]; then
       exec "$real" "$@"

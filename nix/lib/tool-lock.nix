@@ -8,11 +8,12 @@
   src,
   # cargo-purifier.lock.json.
   lockFile,
+  # Cargo.lock.
+  cargoLock ? src + "/Cargo.lock",
 }:
 let
   lock = import ./read-lock.nix { inherit lib; } {
-    inherit src;
-    inherit lockFile;
+    inherit src lockFile cargoLock;
   };
 in
 if lock.problems != [ ] then throw (lib.concatStringsSep "\n" lock.problems) else lock

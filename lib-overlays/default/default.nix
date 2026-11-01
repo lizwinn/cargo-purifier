@@ -6,7 +6,8 @@
 #   lib.cargo-purifier.readLock { src, lockFile ? ... }
 #
 # nix/lib/read-lock.nix documents it. The builder, buildCargoProject, is a
-# package, which the default package overlay adds.
+# package in the scope `pkgs.cargo-purifier`, which the default package
+# overlay adds.
 { ... }:
 {
 

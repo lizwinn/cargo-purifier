@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# What `cargo-purifier prefetch` builds: everything the everyday loop and
+# What `cargo-purifier prefetch` builds: everything the development loop and
 # the editor need, in one store path that its GC root keeps alive.
 #
 #   vendor    the vendored sources of the workspace
@@ -11,12 +11,13 @@
 #
 #   nix-build tool-prefetch.nix --arg nixpkgs <path> --argstr system <system> \
 #     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json> \
-#     --arg tools 'builtins.storePath "<the cargo-purifier package>"'
+#     --arg cargoLock <Cargo.lock> --arg tools 'builtins.storePath "<the cargo-purifier package>"'
 {
   nixpkgs,
   system,
   src,
   lockFile,
+  cargoLock ? src + "/Cargo.lock",
   # The cargo-purifier package that runs the prefetch, or null when the
   # command runs outside it.
   tools,
@@ -29,6 +30,7 @@ let
       system
       src
       lockFile
+      cargoLock
       ;
   };
 in

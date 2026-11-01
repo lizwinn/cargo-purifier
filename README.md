@@ -13,21 +13,22 @@ reuses it, and writes `cargo-purifier.lock.json` beside it only for what
 
 ## Quickstart
 
-At the workspace root, lock the workspace and commit both lockfiles:
+At the workspace root, lock the workspace and commit both lockfiles to
+the repository, which is the setup we recommend:
 
 ```zsh
 nix run github:nix-purifiers/cargo-purifier -- lock
 git add Cargo.lock cargo-purifier.lock.json
 ```
 
-Build it with Nix. The flake's `overlays.default` adds `buildCargoProject`
-to a package set, and a package written for `callPackage` takes it by
-name:
+Build it with Nix. The flake's `overlays.default` adds the scope
+`pkgs.cargo-purifier` to a package set, and a package written for
+`callPackage` takes the scope by name and calls its `buildCargoProject`:
 
 ```nix
 # package.nix
-{ buildCargoProject }:
-(buildCargoProject { src = ./.; }).packages.hello
+{ cargo-purifier }:
+(cargo-purifier.buildCargoProject { src = ./.; }).packages.hello
 ```
 
 ```nix
@@ -45,13 +46,14 @@ name:
     in
     {
       packages.${system}.hello = pkgs.callPackage ./package.nix { };
-      checks.${system}.tests = (pkgs.buildCargoProject { src = ./.; }).tests;
+      checks.${system}.tests = (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).tests;
     };
 }
 ```
 
-For the development loop and the editor, put the `cargo-purifier` package on
-the `PATH`, for example in a development shell, and prefetch once:
+For the development loop and the editor, put the `cargo-purifier` package
+of the scope on the `PATH`, for example in a development shell as
+`pkgs.cargo-purifier.cargo-purifier`, and prefetch once:
 
 ```zsh
 cargo-purifier prefetch
@@ -83,7 +85,8 @@ lockfiles do not record stops, and names `cargo-purifier lock`.
 
 ### The Nix build
 
-`buildCargoProject { src, lockFile ? …, fetchers ? { }, ... }` returns:
+`cargo-purifier.buildCargoProject { src, lockFile ? …, cargoLock ? …, fetchers ? { }, ... }`
+returns:
 
 | Attribute | What it is |
 |---|---|
@@ -102,7 +105,7 @@ no package.
 
 ### The lock in memory
 
-`lib.cargo-purifier.readLock { src, workspace ? ".", lockFile ? … }` reads
+`lib.cargo-purifier.readLock { src, workspace ? ".", lockFile ? …, cargoLock ? … }` reads
 both lockfiles into the shape every purifier shares: `purifier`,
 `entries`, `outputs` and `problems`. `entries` are download entries of the
 [purifier library](https://github.com/nix-purifiers/purifier): a file
@@ -122,15 +125,30 @@ every download, crates.io included, for a mirror or credentials.
 `nix/lib/build-cargo-project.nix` documents the other arguments: `doCheck`
 also runs each package's tests in its build, and `srcFilter` chooses the
 files of a path `src` the builds see. The builder takes the packages it
-builds with by name, so `buildCargoProject.override { rustPlatform = …; }`
-builds with another Rust toolchain.
+builds with by name from the scope, so
+`cargo-purifier.overrideScope (final: prev: { rustPlatform = …; })` builds
+with another Rust toolchain, and `buildCargoProject.override` replaces a
+package for the builder alone.
 
-### A lockfile outside the source
+### Lockfiles outside the source
 
-A packaging flake can build a workspace its author does not change.
-`lockFile` names a purifier lockfile outside `src`; `Cargo.lock` stays in
-the workspace. Every command takes `--lockfile <path>`, and the cargo
-wrapper reads the same path from `CARGO_PURIFIER_LOCKFILE`.
+An external build is an option for a workspace whose repository does not
+hold the lockfiles: a packaging flake that builds a workspace its author
+does not change, or a library that does not commit `Cargo.lock`. The
+packaging flake keeps the lockfiles and passes them to the builder.
+`lockFile` names the purifier lockfile, and `cargoLock` names a
+`Cargo.lock` that the builds use in place of any copy in `src`.
+
+Every command takes `--lockfile <path>` and `--tool-lockfile <path>`, or
+reads the same paths from `CARGO_PURIFIER_LOCKFILE` and
+`CARGO_PURIFIER_TOOL_LOCKFILE`. A development shell of the packaging flake
+can set both variables to the paths it passes to the builder. With an
+outside `Cargo.lock`, `cargo-purifier lock` and `update` run cargo on it,
+write the result there, and leave the workspace's own `Cargo.lock` as it
+was. When the outside file does not exist yet, they start from the
+workspace's copy. cargo reads `Cargo.lock` only from the workspace root, so
+the cargo wrapper copies the outside `Cargo.lock` there before it runs
+cargo.
 
 ### Publish
 
@@ -179,7 +197,7 @@ The toolchain that a prefetch keeps is the Rust of the package set the
 `cargo-purifier` package was built from. A `rust-toolchain.toml` file in the
 workspace names a toolchain that rustup downloads, and cargo-purifier
 builds with the package set's Rust instead; to build with another one,
-pass it to `buildCargoProject.override { rustPlatform = …; }`.
+pass it to `cargo-purifier.overrideScope`.
 
 ## Editor
 
@@ -262,7 +280,7 @@ Add a `flake.nix` beside `Cargo.toml` to build `rg` with Nix:
         inherit system;
         overlays = [ cargo-purifier.overlays.default ];
       };
-      ripgrep = pkgs.buildCargoProject { src = ./.; };
+      ripgrep = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
     in
     {
       packages.${system}.default = ripgrep.packages.ripgrep;
@@ -301,7 +319,7 @@ cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml --lockfile ./ripgre
         inherit system;
         overlays = [ cargo-purifier.overlays.default ];
       };
-      project = pkgs.buildCargoProject {
+      project = pkgs.cargo-purifier.buildCargoProject {
         src = ripgrep;
         lockFile = ./ripgrep.lock.json;
       };

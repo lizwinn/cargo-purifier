@@ -63,6 +63,20 @@ let
     lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
   };
 
+  # The workspace fixture with a Cargo.lock in its source that cargo cannot
+  # read, built from both lockfiles beside it: the Cargo.lock passed to the
+  # builder replaces the one in the source.
+  externalCargoLock = build {
+    src = pkgs.runCommand "workspace-with-another-cargo-lock" { } ''
+      cp -r ${./fixtures/workspace} $out
+      chmod -R u+w $out
+      rm $out/cargo-purifier.lock.json
+      echo 'not a Cargo.lock' >$out/Cargo.lock
+    '';
+    lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
+    cargoLock = ./fixtures/workspace/Cargo.lock;
+  };
+
   workspaceLock = lib.importJSON ./fixtures/workspace/cargo-purifier.lock.json;
 
   sri =
@@ -152,6 +166,7 @@ realWorld
 
   conformance-external = pkgs.runCommand "conformance-external" { } ''
     test "$(${lib.getExe external.packages.hello})" = "hello from 2 crates and 1.5"
+    test "$(${lib.getExe externalCargoLock.packages.hello})" = "hello from 2 crates and 1.5"
     touch $out
   '';
 

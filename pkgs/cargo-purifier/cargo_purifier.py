@@ -12,7 +12,7 @@ read, so a Nix build can tell when the two files no longer belong
 together, and the hash of its own content, so a hand edit shows.
 
 `cargo-purifier prefetch` builds the vendored sources and the tools of the
-everyday loop and the editor in the Nix store, and keeps them alive with a
+development loop and the editor in the Nix store, and keeps them alive with a
 garbage-collector root at target/cargo-purifier/prefetch.
 
 `cargo-purifier publish` uploads the .crate that Nix packages for a
@@ -23,6 +23,7 @@ cargo runs this command as `cargo purifier <command>` too.
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import io
 import json
@@ -69,13 +70,48 @@ def content_hash(lock):
 
 
 def lock_path_of(options, root):
-    """The purifier lockfile: `--lockfile`, or the one at the workspace root."""
-    return Path(options.lockfile).resolve() if options.lockfile else root / LOCK_NAME
+    """The purifier lockfile: `--lockfile` or CARGO_PURIFIER_LOCKFILE, or the
+    one at the workspace root."""
+    value = options.lockfile or os.environ.get("CARGO_PURIFIER_LOCKFILE")
+    return Path(value).resolve() if value else root / LOCK_NAME
 
 
-def checked_lock(root, path):
+def cargo_lock_of(options, root):
+    """Cargo.lock: `--tool-lockfile` or CARGO_PURIFIER_TOOL_LOCKFILE, for a
+    copy kept outside the tree, or the one at the workspace root."""
+    value = options.tool_lockfile or os.environ.get("CARGO_PURIFIER_TOOL_LOCKFILE")
+    return Path(value).resolve() if value else root / "Cargo.lock"
+
+
+@contextlib.contextmanager
+def cargo_lock_in_tree(root, cargo_lock):
+    """Runs the cargo commands inside it on `cargo_lock`, which cargo reads
+    only from the workspace root. A Cargo.lock outside the tree goes into
+    the workspace root first, when it exists, and otherwise cargo starts
+    from the tree's copy. Afterwards the result goes to `cargo_lock`, and
+    the tree's own copy is put back as it was."""
+    tree = root / "Cargo.lock"
+    if cargo_lock == tree:
+        yield
+        return
+    kept = tree.read_bytes() if tree.exists() else None
+    if cargo_lock.exists():
+        tree.write_bytes(cargo_lock.read_bytes())
+    try:
+        yield
+        cargo_lock.parent.mkdir(parents=True, exist_ok=True)
+        cargo_lock.write_bytes(tree.read_bytes())
+    finally:
+        if kept is None:
+            tree.unlink(missing_ok=True)
+        else:
+            tree.write_bytes(kept)
+
+
+def checked_lock(cargo_lock, path):
     """The purifier lockfile at `path`, refused when it is missing,
-    malformed, edited by hand, or made from another Cargo.lock."""
+    malformed, edited by hand, or made from another Cargo.lock than
+    `cargo_lock`."""
     fix = "Run `cargo-purifier lock` to write it again."
     if not path.exists():
         raise Failure(f"{path} is missing. Run `cargo-purifier lock` first.")
@@ -87,7 +123,9 @@ def checked_lock(root, path):
         raise Failure(f"{path} is not a cargo-purifier lockfile of format {FORMAT}. {fix}")
     if lock.get("contentHash") != content_hash(lock):
         raise Failure(f"{path} was changed after `cargo-purifier lock` wrote it. {fix}")
-    if lock.get("cargoLock") != sri_sha256((root / "Cargo.lock").read_bytes()):
+    if not cargo_lock.exists():
+        raise Failure(f"{cargo_lock} is missing. Run `cargo-purifier lock` first.")
+    if lock.get("cargoLock") != sri_sha256(cargo_lock.read_bytes()):
         raise Failure(f"{path} was made from a different Cargo.lock. Run `cargo-purifier lock` and commit both files.")
     return lock
 
@@ -236,13 +274,15 @@ def workspace_root(manifest_path):
 def lock(options):
     root, root_manifest = workspace_root(options.manifest_path)
     workspace = ["--manifest-path", root_manifest]
+    cargo_lock_path = cargo_lock_of(options, root)
 
-    # Brings Cargo.lock up to date with the manifests, changing no more than
-    # it must, and downloads what it names. Its output goes to the terminal.
-    run(["cargo", "fetch", *workspace], capture=False, cwd=root)
-
-    metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked", *workspace],
-                              cwd=root))
+    with cargo_lock_in_tree(root, cargo_lock_path):
+        # Brings Cargo.lock up to date with the manifests, changing no more
+        # than it must, and downloads what it names. Its output goes to the
+        # terminal.
+        run(["cargo", "fetch", *workspace], capture=False, cwd=root)
+        metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked",
+                                   *workspace], cwd=root))
     members = set(metadata["workspace_members"])
     packages = {}
     for package in metadata["packages"]:
@@ -260,7 +300,7 @@ def lock(options):
             } if libs else None,
         }
 
-    cargo_lock_bytes = (root / "Cargo.lock").read_bytes()
+    cargo_lock_bytes = cargo_lock_path.read_bytes()
     cargo_lock = tomllib.loads(cargo_lock_bytes.decode())
 
     lock_path = lock_path_of(options, root)
@@ -330,7 +370,8 @@ def update(options):
     of the result."""
     root, root_manifest = workspace_root(options.manifest_path)
     named = [argument for package in options.packages for argument in ("--package", package)]
-    run(["cargo", "update", "--manifest-path", root_manifest, *named], capture=False, cwd=root)
+    with cargo_lock_in_tree(root, cargo_lock_of(options, root)):
+        run(["cargo", "update", "--manifest-path", root_manifest, *named], capture=False, cwd=root)
     lock(options)
 
 
@@ -454,17 +495,18 @@ def tools_arg():
     return f"builtins.storePath {json.dumps(tools)}" if tools else "null"
 
 
-def vendor_stamp(root, lock_path):
+def vendor_stamp(cargo_lock, lock_path):
     """What the cargo wrapper records for the lockfiles it built the
     vendored sources from: the output of `cat <lockfiles> | sha256sum`."""
-    data = lock_path.read_bytes() + (root / "Cargo.lock").read_bytes()
+    data = lock_path.read_bytes() + cargo_lock.read_bytes()
     return hashlib.sha256(data).hexdigest() + "  -"
 
 
 def prefetch(options):
     root, _ = workspace_root(options.manifest_path)
     lock_path = lock_path_of(options, root)
-    checked_lock(root, lock_path)
+    cargo_lock = cargo_lock_of(options, root)
+    checked_lock(cargo_lock, lock_path)
     state = root / "target" / "cargo-purifier"
     state.mkdir(parents=True, exist_ok=True)
     print("cargo-purifier: building the vendored sources and the tools in the Nix store", file=sys.stderr)
@@ -472,6 +514,7 @@ def prefetch(options):
         "tool-prefetch.nix",
         "--arg", "src", path_arg(root),
         "--arg", "lockFile", path_arg(lock_path),
+        "--arg", "cargoLock", path_arg(cargo_lock),
         "--arg", "tools", tools_arg(),
         "--out-link", str(state / "prefetch"),
     ))
@@ -481,17 +524,18 @@ def prefetch(options):
     if vendor.is_symlink() or vendor.exists():
         vendor.unlink()
     vendor.symlink_to(os.path.realpath(out / "vendor"))
-    (state / "stamp").write_text(vendor_stamp(root, lock_path) + "\n")
+    (state / "stamp").write_text(vendor_stamp(cargo_lock, lock_path) + "\n")
     print(f"cargo-purifier: prefetched; {state / 'prefetch'} keeps everything alive, "
-          "and the everyday loop and the editor now work offline", file=sys.stderr)
+          "and the development loop and the editor now work offline", file=sys.stderr)
 
 
-def nix_release(root, lock_path, package):
+def nix_release(root, lock_path, cargo_lock, package):
     """The .crate file Nix packages for a workspace package."""
     out = nix_build(
         "tool-release.nix", "--no-out-link",
         "--arg", "src", path_arg(root),
         "--arg", "lockFile", path_arg(lock_path),
+        "--arg", "cargoLock", path_arg(cargo_lock),
         "--argstr", "package", package,
     )
     crates = list(Path(out).glob("*.crate"))
@@ -508,7 +552,8 @@ def publish(options):
         crate_path = Path(options.crate)
     else:
         lock_path = lock_path_of(options, root)
-        lock_data = checked_lock(root, lock_path)
+        cargo_lock = cargo_lock_of(options, root)
+        lock_data = checked_lock(cargo_lock, lock_path)
         package = options.package
         if package is None:
             names = sorted(lock_data["packages"])
@@ -516,7 +561,7 @@ def publish(options):
                 raise Failure(f"the workspace has several packages ({', '.join(names)}); choose one with --package")
             package = names[0]
         print(f"cargo-purifier: packaging {package} with Nix", file=sys.stderr)
-        crate_path = nix_release(root, lock_path, package)
+        crate_path = nix_release(root, lock_path, cargo_lock, package)
     crate_bytes = crate_path.read_bytes()
 
     if options.registry:
@@ -576,11 +621,12 @@ def main(argv):
     locker = commands.add_parser("lock", help="write cargo-purifier.lock.json, keeping cargo's resolution")
     updater = commands.add_parser("update", help="`cargo update` every package or the named ones, then lock")
     updater.add_argument("packages", nargs="*", help="the packages to update; all of them by default")
-    fetcher = commands.add_parser("prefetch", help="build what the everyday loop and the editor need, for offline work")
+    fetcher = commands.add_parser("prefetch", help="build what the development loop and the editor need, for offline work")
     publisher = commands.add_parser("publish", help="upload the .crate Nix packages for a workspace package")
     for command in (locker, updater, fetcher, publisher):
         command.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
         command.add_argument("--lockfile", help="the purifier lockfile, when it lives outside the workspace")
+        command.add_argument("--tool-lockfile", help="Cargo.lock, when a copy outside the workspace takes its place")
     publisher.add_argument("-p", "--package", help="the workspace package to publish")
     publisher.add_argument("--registry", help="a registry configured in cargo's configuration; crates.io by default")
     publisher.add_argument("--crate", help="a .crate file to upload instead of the one Nix packages")

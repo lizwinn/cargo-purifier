@@ -8,6 +8,8 @@
 # not exist and the SSH host needs keys, so only their content hash is
 # written again. Last, tests/fixtures/stale/Cargo.lock is the workspace's
 # Cargo.lock with one extra line, which no purifier lockfile was made from.
+# A lock of a copy of the workspace fixture, with both lockfiles outside
+# it, checks `--lockfile` and `--tool-lockfile`.
 #
 # Run it from the repository root: tests/relock-fixtures.sh
 set -euo pipefail
@@ -37,3 +39,20 @@ mkdir -p tests/fixtures/stale
   cat tests/fixtures/workspace/Cargo.lock
   echo '# changed after cargo-purifier lock'
 } >tests/fixtures/stale/Cargo.lock
+
+# A lock with both lockfiles outside the tree starts from the outside
+# Cargo.lock, writes the same lockfiles as the lock in the tree, and leaves
+# the tree's Cargo.lock as it was.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cp -r tests/fixtures/workspace "$work/tree"
+chmod -R u+w "$work/tree"
+rm "$work/tree/cargo-purifier.lock.json"
+echo '# the tree copy' >>"$work/tree/Cargo.lock"
+cp tests/fixtures/workspace/Cargo.lock "$work/Cargo.lock"
+"$tools/bin/cargo-purifier" lock --manifest-path "$work/tree/Cargo.toml" \
+  --lockfile "$work/cargo-purifier.lock.json" --tool-lockfile "$work/Cargo.lock"
+cmp "$work/Cargo.lock" tests/fixtures/workspace/Cargo.lock
+cmp "$work/cargo-purifier.lock.json" tests/fixtures/workspace/cargo-purifier.lock.json
+test "$(tail -n 1 "$work/tree/Cargo.lock")" = '# the tree copy'
+test ! -e "$work/tree/cargo-purifier.lock.json"
