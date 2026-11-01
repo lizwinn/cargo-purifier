@@ -145,9 +145,9 @@ copy, offline.
 | A malformed or incomplete purifier lockfile | The Nix build fails naming the file, with "run `cargo purify` to write it again". |
 | A hash that does not match the download | Nix reports a hash mismatch for the crate or checkout. Either the lockfile was edited, or the upstream changed what it serves under that version or commit; `cargo purify` records what upstream serves now. |
 
-`cargo purify` takes about a second for ripgrep's 61 crates when cargo's
-download cache is warm, and a rerun hashes only the git checkouts that
-changed.
+A relock is quick. In CI, cloning ripgrep and running `cargo purify` on
+its 61 crates with an empty cargo cache takes 3 to 4 seconds in all. A
+rerun hashes only the git checkouts that changed.
 
 ## Publish
 
