@@ -38,6 +38,13 @@ nix build --impure --expr '
   (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.hello'
 ```
 
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
+
 A flake can package the workspace by calling the builder directly. It can
 live in the repository of the workspace or in another one:
 
