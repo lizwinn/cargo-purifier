@@ -3,6 +3,8 @@
   "git": [
     {
       "git": {
+        "commitObject": null,
+        "leaveDotGit": false,
         "rev": "12746aa88cc51a6f1fc97f92b8d36d991c2d966e",
         "submodules": true,
         "url": "https://github.com/dtolnay/ryu"

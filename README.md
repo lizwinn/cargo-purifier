@@ -167,7 +167,13 @@ the workspace.
   "cargoLock": "sha256-…",
   "git": [
     {
-      "git": { "rev": "12746aa8…", "submodules": true, "url": "https://github.com/dtolnay/ryu" },
+      "git": {
+        "commitObject": null,
+        "leaveDotGit": false,
+        "rev": "12746aa8…",
+        "submodules": true,
+        "url": "https://github.com/dtolnay/ryu"
+      },
       "hash": "sha256-3sLJLjnNzF0WaWXzI8Re4m3JiZ+W3h4p8TKRsETIUTU=",
       "path": "git/12746aa8…"
     }
@@ -185,7 +191,9 @@ the workspace.
 
 `cargoLock` is the SRI hash of the `Cargo.lock` the file was made from.
 Each `git` entry is one checkout: a commit of a repository, the URL it is
-fetched from, and the NAR hash that nixpkgs `fetchgit` computes for it. One
+fetched from, and the NAR hash that nixpkgs `fetchgit` computes for it.
+cargo reads a checkout's files and never its `.git` directory, so
+`leaveDotGit` is false and `commitObject` is null in every entry. One
 checkout can provide several crates, and the vendoring step finds each
 crate in it by name. `registries` maps each registry source in `Cargo.lock`
 to the `dl` template of its index configuration. `packages` lists the

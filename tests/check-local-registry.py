@@ -17,6 +17,7 @@ source = "registry+" + index
 assert lock["registries"] == {source: {"dl": dl}}, lock["registries"]
 [git] = lock["git"]
 assert git["git"]["url"] == git_url and git["git"]["submodules"] is True, git
+assert git["git"]["leaveDotGit"] is False and git["git"]["commitObject"] is None, git
 assert git["hash"].startswith("sha256-") and git["path"] == "git/" + git["git"]["rev"], git
 assert lock["packages"]["app"] == {"bins": ["app"], "lib": None, "manifest": "Cargo.toml"}, lock["packages"]
 

@@ -257,7 +257,8 @@ def lock(options):
             digest = git_hash(url, rev)
         git.append({
             "path": f"git/{rev}",
-            "git": {"url": url, "rev": rev, "submodules": True},
+            # cargo reads a checkout's files and never its .git directory.
+            "git": {"url": url, "rev": rev, "submodules": True, "leaveDotGit": False, "commitObject": None},
             "hash": digest,
         })
 
