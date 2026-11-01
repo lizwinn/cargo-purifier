@@ -80,17 +80,17 @@ writeShellApplication {
       exec "$real" "$@"
     }
     root=''${manifest%/Cargo.toml}
+    lock=''${CARGO_PURIFIER_LOCKFILE:-$root/cargo-purifier.lock.json}
+    if [ ! -e "$lock" ]; then
+      echo "cargo-purifier: warning: no cargo-purifier.lock.json found; running cargo impurely. Run \`cargo-purifier lock\` to use Nix-resolved dependencies." >&2
+      exec "$real" "$@"
+    fi
     # cargo reads Cargo.lock only from the workspace root, so a Cargo.lock
     # kept outside the tree is copied there.
     tool_lock=''${CARGO_PURIFIER_TOOL_LOCKFILE:-}
     if [ -n "$tool_lock" ] && [ -f "$tool_lock" ] && ! cmp -s "$tool_lock" "$root/Cargo.lock"; then
       cp "$tool_lock" "$root/Cargo.lock"
       chmod u+w "$root/Cargo.lock"
-    fi
-    lock=''${CARGO_PURIFIER_LOCKFILE:-$root/cargo-purifier.lock.json}
-    if [ ! -e "$lock" ]; then
-      echo "cargo-purifier: warning: no cargo-purifier.lock.json found; running cargo impurely. Run \`cargo-purifier lock\` to use Nix-resolved dependencies." >&2
-      exec "$real" "$@"
     fi
     if [ ! -f "$root/Cargo.lock" ]; then
       echo "cargo-purifier: Cargo.lock is missing beside an existing purifier lock; run cargo-purifier lock" >&2
