@@ -1,0 +1,9 @@
+[package]
+name = "hello"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+greet = { path = "../greet" }
+# A git dependency, which Cargo.lock pins by commit but not by hash.
+ryu = { git = "https://github.com/dtolnay/ryu", tag = "1.0.18" }
