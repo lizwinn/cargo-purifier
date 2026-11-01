@@ -1,5 +1,6 @@
 {
   "cargoLock": "sha256-Yl2SwzrDxG0BW7S6PPhDNZmZ3BajxvawRYch99l+QKM=",
+  "contentHash": "sha256-SjLoEX8+fJRK5IHYGi3IR+GJkXKo5K+RhsybIDlcCYI=",
   "git": [
     {
       "git": {
@@ -18,8 +19,7 @@
       "bins": [
         "tell"
       ],
-      "lib": null,
-      "manifest": "Cargo.toml"
+      "lib": null
     }
   },
   "registries": {},

@@ -14,4 +14,13 @@
 let
   pkgs = import nixpkgs { inherit system; };
 in
-pkgs.callPackage ./vendor.nix { inherit lockFile cargoLock; }
+(import ./vendor.nix {
+  inherit (pkgs)
+    lib
+    rustPlatform
+    fetchurl
+    fetchgit
+    runCommand
+    ;
+  inherit lockFile cargoLock;
+}).vendor

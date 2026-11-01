@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+#
+# What `cargo-purifier prefetch` builds: everything the everyday loop and
+# the editor need, in one store path that its GC root keeps alive.
+#
+#   vendor    the vendored sources of the workspace
+#   tools     the cargo-purifier package: the cargo wrapper with its cargo,
+#             rustc and C compiler, and rust-analyzer with its proc-macro
+#             server
+#   rust-src  the standard library's sources, which rust-analyzer reads
+#
+#   nix-build tool-prefetch.nix --arg nixpkgs <path> --argstr system <system> \
+#     --arg lockFile <cargo-purifier.lock.json> --arg cargoLock <Cargo.lock> \
+#     --arg tools 'builtins.storePath "<the cargo-purifier package>"'
+{
+  nixpkgs,
+  system,
+  lockFile,
+  cargoLock,
+  # The cargo-purifier package that runs the prefetch, or null when the
+  # command runs outside it.
+  tools,
+}:
+let
+  pkgs = import nixpkgs { inherit system; };
+  vendor = import ./tool-vendor.nix {
+    inherit
+      nixpkgs
+      system
+      lockFile
+      cargoLock
+      ;
+  };
+in
+pkgs.linkFarm "cargo-purifier-prefetch" (
+  {
+    inherit vendor;
+    rust-src = pkgs.rustPlatform.rustLibSrc;
+  }
+  // pkgs.lib.optionalAttrs (tools != null) { inherit tools; }
+)

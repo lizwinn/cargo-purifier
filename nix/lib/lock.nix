@@ -7,7 +7,7 @@
 # workspace's packages.
 #
 # Evaluation fails when the Cargo.lock beside the purifier lockfile is not
-# the one `cargo purify` read, because the git hashes, the registries and
+# the one `cargo-purifier lock` read, because the git hashes, the registries and
 # the package list may no longer match it.
 {
   lib,
@@ -17,35 +17,48 @@
   cargoLock,
 }:
 let
-  lock = builtins.addErrorContext "while reading the cargo-purifier lockfile ${toString lockFile}; run `cargo purify` to write it again" (
+  lock = builtins.addErrorContext "while reading the cargo-purifier lockfile ${toString lockFile}; run `cargo-purifier lock` to write it again" (
     builtins.fromJSON (builtins.readFile lockFile)
   );
 
   fields = [
     "cargoLock"
+    "contentHash"
     "git"
     "packages"
   ];
 
-  cargoLockHash = builtins.convertHash {
-    hash = builtins.hashFile "sha256" cargoLock;
-    hashAlgo = "sha256";
-    toHashFormat = "sri";
-  };
+  sri =
+    hex:
+    builtins.convertHash {
+      hash = hex;
+      hashAlgo = "sha256";
+      toHashFormat = "sri";
+    };
+
+  cargoLockHash = sri (builtins.hashFile "sha256" cargoLock);
+
+  # The hash `cargo-purifier lock` records for the lockfile's own content:
+  # of the JSON builtins.toJSON writes for it without `contentHash`.
+  contentHash = sri (
+    builtins.hashString "sha256" (builtins.toJSON (removeAttrs lock [ "contentHash" ]))
+  );
 
   checked =
     if !(builtins.isAttrs lock) || (lock.version or null) == null then
-      throw "cargo-purifier: ${toString lockFile} is not a cargo-purifier lockfile. Run `cargo purify` to write it again."
+      throw "cargo-purifier: ${toString lockFile} is not a cargo-purifier lockfile. Run `cargo-purifier lock` to write it again."
     else if (lock.version or null) != 1 then
       throw "cargo-purifier: ${toString lockFile} has format ${
         toString (lock.version or "unknown")
-      }, and this cargo-purifier reads format 1. Run `cargo purify` with this cargo-purifier."
+      }, and this cargo-purifier reads format 1. Run `cargo-purifier lock` with this cargo-purifier."
     else if !(lib.all (field: lock ? ${field}) fields) then
       throw "cargo-purifier: ${toString lockFile} lacks ${
         lib.concatStringsSep ", " (lib.filter (field: !(lock ? ${field})) fields)
-      }. Run `cargo purify` to write it again."
+      }. Run `cargo-purifier lock` to write it again."
+    else if lock.contentHash != contentHash then
+      throw "cargo-purifier: ${toString lockFile} was changed after `cargo-purifier lock` wrote it. Run `cargo-purifier lock` to write it again."
     else if lock.cargoLock != cargoLockHash then
-      throw "cargo-purifier: ${toString lockFile} was made from a different Cargo.lock. Run `cargo purify` and commit both files."
+      throw "cargo-purifier: ${toString lockFile} was made from a different Cargo.lock. Run `cargo-purifier lock` and commit both files."
     else
       lock;
 
@@ -83,7 +96,7 @@ in
       package:
       lib.nameValuePair "${package.name}-${package.version}" (
         hashByRev.${revOf package}
-        or (throw "cargo-purifier: ${toString lockFile} has no hash for the git dependency ${package.name}. Run `cargo purify`.")
+        or (throw "cargo-purifier: ${toString lockFile} has no hash for the git dependency ${package.name}. Run `cargo-purifier lock`.")
       )
     ) gitPackages
   );
@@ -91,12 +104,15 @@ in
   # The commit a git package's source names.
   inherit revOf;
 
+  # The git checkouts, as git entries of the purifier library.
+  gitEntries = checked.git;
+
   # The URL a git package's checkout is fetched from: the URL in Cargo.lock,
   # or its HTTPS form for an ssh:// dependency.
   gitUrlOf =
     package:
     (lib.findFirst (entry: entry.git.rev == revOf package)
-      (throw "cargo-purifier: ${toString lockFile} has no hash for the git dependency ${package.name}. Run `cargo purify`.")
+      (throw "cargo-purifier: ${toString lockFile} has no hash for the git dependency ${package.name}. Run `cargo-purifier lock`.")
       checked.git
     ).git.url;
 
@@ -123,13 +139,13 @@ in
   registryOf =
     source:
     (checked.registries or { }).${source}
-      or (throw "cargo-purifier: ${toString lockFile} has no entry for the registry ${source}. Run `cargo purify`.");
+      or (throw "cargo-purifier: ${toString lockFile} has no entry for the registry ${source}. Run `cargo-purifier lock`.");
 
   # The version of a workspace package, which Cargo.lock records.
   versionOf =
     name:
     (lib.findFirst (package: package.name == name)
-      (throw "cargo-purifier: Cargo.lock has no workspace package ${name}. Run `cargo purify`.")
+      (throw "cargo-purifier: Cargo.lock has no workspace package ${name}. Run `cargo-purifier lock`.")
       localPackages
     ).version;
 }

@@ -1,5 +1,6 @@
 {
   "cargoLock": "sha256-7jlTC14q8I5N+4Xm/pF9r1tGuNXaS7gysftsnjmsluk=",
+  "contentHash": "sha256-oQ6F4rSnpO8V4PaBGYvaJY0AttT1gCOHbXQ2CXYDNYA=",
   "git": [
     {
       "git": {
@@ -23,8 +24,7 @@
           "staticlib"
         ],
         "name": "ffi"
-      },
-      "manifest": "ffi/Cargo.toml"
+      }
     },
     "greet": {
       "bins": [],
@@ -33,15 +33,13 @@
           "lib"
         ],
         "name": "greet"
-      },
-      "manifest": "greet/Cargo.toml"
+      }
     },
     "hello": {
       "bins": [
         "hello"
       ],
-      "lib": null,
-      "manifest": "hello/Cargo.toml"
+      "lib": null
     }
   },
   "registries": {},

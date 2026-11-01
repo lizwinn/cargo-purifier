@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: MIT
 #
-# The `cargo-purifier` library namespace. It holds nothing: the builder
-# needs a package set, so it is the package `buildCargoProject` that the
-# default package overlay adds.
+# The `cargo-purifier` library namespace, which holds the builder of the
+# purifier contract:
+#
+#   lib.cargo-purifier.buildCargoProject { pkgs, src, fetchers ? { }, ... }
+#
+# nix/lib/build-cargo-project.nix documents its arguments and result.
 { ... }:
 {
 
   overlay = final: prev: {
-    cargo-purifier = prev.cargo-purifier or { };
+    cargo-purifier = {
+      buildCargoProject = import ../../nix/lib/build-cargo-project.nix;
+    };
   };
 
 }

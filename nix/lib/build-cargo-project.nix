@@ -1,47 +1,44 @@
 # SPDX-License-Identifier: MIT
 #
-# buildCargoProject: the packages of a cargo workspace, built in the
+# lib.cargo-purifier.buildCargoProject: a cargo workspace, built in the
 # sandbox from its Cargo.lock and the cargo-purifier.lock.json that
-# `cargo purify` wrote beside it. The workspace needs no Nix files of its
-# own.
+# `cargo-purifier lock` wrote. The workspace needs no Nix files of its own.
 #
-#   (buildCargoProject { src = ./.; }).packages.<package>
-#   (buildCargoProject { src = ./.; }).crates.<package>
+#   lib.cargo-purifier.buildCargoProject { inherit pkgs; src = ./.; }
 #
-# Every workspace package that has a binary, or a library cargo writes as a
-# file to install (a cdylib, a staticlib or a dylib), has a package here,
-# built with `cargo build --package <package>`. Every workspace package has
-# a crate: the .crate file that `cargo package --package <package>` makes,
-# which `cargo purify publish` uploads. All of them share one derivation of
-# vendored sources.
+# The result follows the purifier contract:
+#
+#   packages.<package>   every workspace package that has a binary, or a
+#                        library cargo writes as a file to install (a
+#                        cdylib, a staticlib or a dylib), built with
+#                        `cargo build --package <package>`
+#   tests                `cargo test --workspace`, in the sandbox
+#   release.<package>    the .crate that `cargo package --package <package>`
+#                        makes, which `cargo-purifier publish` uploads
+#   fetches              every download, as purifier library entries
+#   vendor               the vendored sources every build reads
 #
 # The lockfile names every output, so evaluation knows each one's path
 # without building anything:
 #
-#   packages.<package>.bins.<binary>         $out/bin/<binary>
-#   packages.<package>.libs."<file>"         $out/lib/lib<name>.so or .a
-#   crates.<package>.crate                   $out/<package>-<version>.crate
-#
-# `buildCargoProject.override` replaces what the builder takes from the
-# package set: `rustPlatform` for another Rust toolchain, `fetchurl` for
-# registry downloads that need credentials or a mirror, and `fetchgit` for
-# private git repositories.
+#   packages.<package>.bins.<binary>    $out/bin/<binary>
+#   packages.<package>.libs."<file>"    $out/lib/lib<name>.so or .a
+#   release.<package>.crate             $out/<package>-<version>.crate
 {
-  lib,
-  stdenv,
-  rustPlatform,
-  fetchurl,
-  fetchgit,
-  runCommand,
-}:
-{
+  pkgs,
   # The workspace root: the directory of the workspace's Cargo.toml.
   src,
-  # cargo-purifier.lock.json.
+  # Fetchers in place of nixpkgs' own, as the purifier library's fetchEntry
+  # takes them: `fetchurl` for registry downloads behind a mirror or
+  # credentials, and `fetchgit` for private git repositories.
+  fetchers ? { },
+  # cargo-purifier.lock.json. A file outside `src` lets a packaging flake
+  # build a workspace its author does not change.
   lockFile ? src + "/cargo-purifier.lock.json",
-  # The workspace's Cargo.lock.
+  # The workspace's Cargo.lock. A file outside `src` replaces any copy in
+  # it.
   cargoLock ? src + "/Cargo.lock",
-  # Runs `cargo test --package <package>` in each package's build.
+  # Runs `cargo test --package <package>` in each package's build too.
   doCheck ? false,
   # Which files of a path `src` the builds see. The default leaves out
   # cargo's target directory and Nix result links.
@@ -50,23 +47,28 @@
     let
       name = baseNameOf path;
     in
-    !(type == "directory" && name == "target") && !(lib.hasPrefix "result" name)
+    !(type == "directory" && name == "target") && !(pkgs.lib.hasPrefix "result" name)
   ),
+  # The Rust toolchain.
+  rustPlatform ? pkgs.rustPlatform,
 }:
 let
+  inherit (pkgs) lib stdenv;
+
   lock = import ./lock.nix { inherit lib lockFile cargoLock; };
 
-  vendor = import ./vendor.nix {
+  vendored = import ./vendor.nix {
     inherit
       lib
       rustPlatform
-      fetchurl
-      fetchgit
-      runCommand
       lockFile
       cargoLock
       ;
+    inherit (pkgs) runCommand;
+    fetchurl = fetchers.fetchurl or pkgs.fetchurl;
+    fetchgit = fetchers.fetchgit or pkgs.fetchgit;
   };
+  inherit (vendored) vendor;
 
   filteredSrc =
     if builtins.isPath src then
@@ -76,6 +78,17 @@ let
       }
     else
       src;
+
+  # Every build works on the Cargo.lock this builder was given, which
+  # nixpkgs' cargoSetupHook then compares with the vendored one.
+  common = {
+    src = filteredSrc;
+    cargoDeps = vendor;
+    prePatch = ''
+      cp ${cargoLock} Cargo.lock
+      chmod u+w Cargo.lock
+    '';
+  };
 
   # The files cargo writes for a library target and nixpkgs' install hook
   # copies to $out/lib.
@@ -93,7 +106,25 @@ let
   mkPackage =
     name: info:
     let
-      drv = buildPackage name info;
+      drv = rustPlatform.buildRustPackage (
+        common
+        // {
+          pname = name;
+          version = lock.versionOf name;
+          inherit doCheck;
+          cargoBuildFlags = [
+            "--package"
+            name
+          ];
+          cargoTestFlags = [
+            "--package"
+            name
+          ];
+          meta = lib.optionalAttrs (lib.length info.bins == 1) {
+            mainProgram = lib.head info.bins;
+          };
+        }
+      );
     in
     drv
     // {
@@ -101,66 +132,60 @@ let
       libs = lib.genAttrs (libFiles info) (file: "${drv}/lib/${file}");
     };
 
-  buildPackage =
-    name: info:
-    rustPlatform.buildRustPackage {
-      pname = name;
-      version = lock.versionOf name;
-      src = filteredSrc;
-      cargoDeps = vendor;
-      inherit doCheck;
-      cargoBuildFlags = [
-        "--package"
-        name
-      ];
-      cargoTestFlags = [
-        "--package"
-        name
-      ];
-      meta = lib.optionalAttrs (lib.length info.bins == 1) {
-        mainProgram = lib.head info.bins;
-      };
-    };
+  # A derivation that runs cargo in the build's source, with the vendored
+  # sources and the toolchain.
+  cargoRun =
+    attrs:
+    stdenv.mkDerivation (
+      common
+      // {
+        nativeBuildInputs = [
+          rustPlatform.cargoSetupHook
+          rustPlatform.rust.cargo
+          rustPlatform.rust.rustc
+        ];
+      }
+      // attrs
+    );
 
-  mkCrate =
+  mkRelease =
     name: _:
     let
       version = lock.versionOf name;
-      drv = buildCrate name version;
+      drv = cargoRun {
+        pname = "${name}-crate";
+        inherit version;
+        # `cargo package` also builds the packaged crate, from its own
+        # sources and the vendored ones.
+        buildPhase = ''
+          runHook preBuild
+          cargo package --frozen --package ${lib.escapeShellArg name}
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          install -Dm644 target/package/${name}-${version}.crate $out/${name}-${version}.crate
+          runHook postInstall
+        '';
+      };
     in
     drv // { crate = "${drv}/${name}-${version}.crate"; };
-
-  buildCrate =
-    name: version:
-    stdenv.mkDerivation {
-      pname = "${name}-crate";
-      inherit version;
-      src = filteredSrc;
-      cargoDeps = vendor;
-      nativeBuildInputs = [
-        rustPlatform.cargoSetupHook
-        rustPlatform.rust.cargo
-        rustPlatform.rust.rustc
-      ];
-      # `cargo package` also builds the packaged crate, from its own
-      # sources and the vendored ones.
-      buildPhase = ''
-        runHook preBuild
-        cargo package --frozen --package ${lib.escapeShellArg name}
-        runHook postBuild
-      '';
-      installPhase = ''
-        runHook preInstall
-        install -Dm644 target/package/${name}-${version}.crate $out/${name}-${version}.crate
-        runHook postInstall
-      '';
-    };
 in
 {
   packages = lib.mapAttrs mkPackage (lib.filterAttrs (_: hasOutputs) lock.packages);
 
-  crates = lib.mapAttrs mkCrate lock.packages;
+  tests = cargoRun {
+    name = "cargo-workspace-tests";
+    buildPhase = ''
+      runHook preBuild
+      cargo test --frozen --workspace
+      runHook postBuild
+    '';
+    installPhase = "touch $out";
+  };
 
-  # The vendored sources, which every build reads.
+  release = lib.mapAttrs mkRelease lock.packages;
+
+  inherit (vendored) fetches;
   inherit vendor;
 }

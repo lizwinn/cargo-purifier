@@ -4,13 +4,17 @@
 # the commands that read the dependencies' sources (build, check, run,
 # test and the like) read them from the vendored sources Nix builds from
 # the two lockfiles, offline. The vendored sources stay alive through a GC
-# root at target/cargo-purifier/vendor, which `cargo clean` removes.
+# root at target/cargo-purifier/vendor, which `cargo clean` removes;
+# `cargo-purifier prefetch` keeps them alive in target/cargo-purifier/prefetch
+# too, with the tools.
 #
-# Every other command runs plain cargo, and so does every command when the
-# workspace has no purifier lockfile or CARGO_PURIFIER=0 is set. When the
-# vendored sources do not build, typically because Cargo.lock changed since
-# `cargo purify`, or when a manifest needs a dependency Cargo.lock lacks,
-# the wrapper says so and cargo resolves the usual way.
+# CARGO_PURIFIER_LOCKFILE names the purifier lockfile when it lives outside
+# the workspace. Every other command runs plain cargo, and so does every
+# command when the workspace has no purifier lockfile or CARGO_PURIFIER=0 is
+# set. A command that would need a download the lockfiles do not record
+# stops, and says which command fixes it: the lockfiles disagree, a manifest
+# needs a dependency Cargo.lock lacks, or the vendored sources cannot be
+# built offline.
 {
   lib,
   path,
@@ -22,7 +26,8 @@
   # nixpkgs' cargo and rustc, taken from `pkgs`: in this package scope
   # `cargo` names this wrapper.
   pkgs,
-  cargo-purify,
+  # The `cargo-purifier` command.
+  command,
 }:
 let
   inherit (pkgs) cargo rustc;
@@ -36,12 +41,12 @@ writeShellApplication {
   ];
   text = ''
     real=${lib.getExe cargo}
-    # `cargo purify` runs cargo-purify, and cargo needs rustc. rustc links
-    # with `cc`, and the package set's C compiler comes last on the PATH, so
-    # a `cc` the user already has comes first.
+    # `cargo purifier` runs the cargo-purifier command, and cargo needs
+    # rustc. rustc links with `cc`, and the package set's C compiler comes
+    # last on the PATH, so a `cc` the user already has comes first.
     export PATH="${
       lib.makeBinPath [
-        cargo-purify
+        command
         rustc
       ]
     }:$PATH:${lib.makeBinPath [ stdenv.cc ]}"
@@ -73,10 +78,18 @@ writeShellApplication {
 
     manifest=$("$real" locate-project --workspace --message-format plain 2>/dev/null) || exec "$real" "$@"
     root=''${manifest%/Cargo.toml}
-    lock=$root/cargo-purifier.lock.json
+    lock=''${CARGO_PURIFIER_LOCKFILE:-$root/cargo-purifier.lock.json}
     if [ ! -f "$lock" ] || [ ! -f "$root/Cargo.lock" ]; then
       exec "$real" "$@"
     fi
+    lock=$(realpath "$lock")
+
+    # stop <message>: the purifier refuses the command.
+    stop() {
+      echo "cargo-purifier: $1" >&2
+      echo "cargo-purifier: CARGO_PURIFIER=0 runs plain cargo, which downloads what it needs." >&2
+      exit 101
+    }
 
     state=$root/target/cargo-purifier
     mkdir -p "$state"
@@ -91,10 +104,9 @@ writeShellApplication {
       --out-link "$state/vendor" 2>"$state/nix-build.log"); then
       printf '%s\n' "$stamp" >"$state/stamp"
     else
-      echo "cargo-purifier: the locked sources did not build, so cargo resolves the usual way. Run \`cargo purify\` if Cargo.lock changed; $state/nix-build.log has the details." >&2
-      # Nix prints the error that ends evaluation last.
-      grep 'error: ' "$state/nix-build.log" | tail -n 1 | sed 's/^ *//' >&2 || true
-      exec "$real" "$@"
+      # Nix prints the error that ends evaluation or the build last.
+      reason=$(grep 'error: ' "$state/nix-build.log" | tail -n 1 | sed 's/^ *//') || true
+      stop "the locked sources did not build: ''${reason:-see $state/nix-build.log}. Run \`cargo-purifier lock\` if Cargo.lock changed, or \`cargo-purifier prefetch\` while online before working offline."
     fi
 
     sed "s|^directory = \"cargo-vendor-dir\"\$|directory = \"$vendor\"|" \
@@ -106,8 +118,7 @@ writeShellApplication {
     if ! "$real" --config "$state/config.toml" metadata --offline --locked --format-version 1 \
       >/dev/null 2>"$state/metadata.log" &&
       grep -q -e 'needs to be updated' -e 'no matching package named' "$state/metadata.log"; then
-      echo "cargo-purifier: Cargo.toml needs dependencies that Cargo.lock lacks, so cargo resolves the usual way. Run \`cargo purify\` afterwards to lock them." >&2
-      exec "$real" "$@"
+      stop "Cargo.toml needs dependencies that Cargo.lock lacks. Run \`cargo-purifier lock\` to lock them."
     fi
 
     exec "$real" --config "$state/config.toml" --offline "$@"

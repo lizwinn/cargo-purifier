@@ -1,5 +1,6 @@
 {
   "cargoLock": "sha256-Gpny8E2WQRI4N5SF42YjoZsBWNlEZ5bm2F1YdGAj9EE=",
+  "contentHash": "sha256-6lcHgX134KMK9vzQ+7YR1MFjPT0FMIktg7KOas6oAO0=",
   "git": [],
   "packages": {
     "globset": {
@@ -9,8 +10,7 @@
           "lib"
         ],
         "name": "globset"
-      },
-      "manifest": "crates/globset/Cargo.toml"
+      }
     },
     "grep": {
       "bins": [],
@@ -19,8 +19,7 @@
           "lib"
         ],
         "name": "grep"
-      },
-      "manifest": "crates/grep/Cargo.toml"
+      }
     },
     "grep-cli": {
       "bins": [],
@@ -29,8 +28,7 @@
           "lib"
         ],
         "name": "grep_cli"
-      },
-      "manifest": "crates/cli/Cargo.toml"
+      }
     },
     "grep-matcher": {
       "bins": [],
@@ -39,8 +37,7 @@
           "lib"
         ],
         "name": "grep_matcher"
-      },
-      "manifest": "crates/matcher/Cargo.toml"
+      }
     },
     "grep-pcre2": {
       "bins": [],
@@ -49,8 +46,7 @@
           "lib"
         ],
         "name": "grep_pcre2"
-      },
-      "manifest": "crates/pcre2/Cargo.toml"
+      }
     },
     "grep-printer": {
       "bins": [],
@@ -59,8 +55,7 @@
           "lib"
         ],
         "name": "grep_printer"
-      },
-      "manifest": "crates/printer/Cargo.toml"
+      }
     },
     "grep-regex": {
       "bins": [],
@@ -69,8 +64,7 @@
           "lib"
         ],
         "name": "grep_regex"
-      },
-      "manifest": "crates/regex/Cargo.toml"
+      }
     },
     "grep-searcher": {
       "bins": [],
@@ -79,8 +73,7 @@
           "lib"
         ],
         "name": "grep_searcher"
-      },
-      "manifest": "crates/searcher/Cargo.toml"
+      }
     },
     "ignore": {
       "bins": [],
@@ -89,15 +82,13 @@
           "lib"
         ],
         "name": "ignore"
-      },
-      "manifest": "crates/ignore/Cargo.toml"
+      }
     },
     "ripgrep": {
       "bins": [
         "rg"
       ],
-      "lib": null,
-      "manifest": "Cargo.toml"
+      "lib": null
     }
   },
   "registries": {},

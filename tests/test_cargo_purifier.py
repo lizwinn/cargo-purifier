@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import cargo_purify
+import cargo_purifier as cargo_purify
 
 
 class GitSource(unittest.TestCase):
@@ -184,6 +184,58 @@ class Config(unittest.TestCase):
         self.assertEqual(config.token_for_source("sparse+https://local.example/index/"), "from-env")
         self.assertEqual(config.tokens["git-index"], "from-file")
         self.assertIsNone(config.name_of_source("sparse+https://unknown.example/"))
+
+
+class Lockfile(unittest.TestCase):
+    def write(self, directory, lock, cargo_lock=b"version = 4\n"):
+        root = Path(directory)
+        (root / "Cargo.lock").write_bytes(cargo_lock)
+        path = root / cargo_purify.LOCK_NAME
+        path.write_text(lock if isinstance(lock, str) else json.dumps(lock))
+        return root, path
+
+    def lock(self):
+        lock = {
+            "version": 1,
+            "cargoLock": cargo_purify.sri_sha256(b"version = 4\n"),
+            "git": [],
+            "registries": {},
+            "packages": {"hello": {"bins": ["hello"], "lib": None}},
+        }
+        lock["contentHash"] = cargo_purify.content_hash(lock)
+        return lock
+
+    def test_content_hash_ignores_itself_and_key_order(self):
+        lock = self.lock()
+        reordered = dict(reversed(list(lock.items())))
+        self.assertEqual(cargo_purify.content_hash(reordered), lock["contentHash"])
+        self.assertNotEqual(cargo_purify.content_hash(lock | {"git": [{"path": "x"}]}), lock["contentHash"])
+
+    def test_accepts_a_written_lockfile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.write(directory, self.lock())
+            self.assertEqual(cargo_purify.checked_lock(root, path)["packages"]["hello"]["bins"], ["hello"])
+
+    def refusal(self, lock, cargo_lock=b"version = 4\n"):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.write(directory, lock, cargo_lock)
+            with self.assertRaises(cargo_purify.Failure) as raised:
+                cargo_purify.checked_lock(root, path)
+            return str(raised.exception)
+
+    def test_refusals_name_the_command(self):
+        tampered = self.lock() | {"git": [{"path": "git/x"}]}
+        cases = {
+            "malformed": ('{ "version": 1, ', b"version = 4\n", "is not valid JSON"),
+            "tampered": (tampered, b"version = 4\n", "was changed after `cargo-purifier lock` wrote it"),
+            "stale": (self.lock(), b"version = 4\n# edited\n", "was made from a different Cargo.lock"),
+            "other format": (self.lock() | {"version": 2}, b"version = 4\n", "is not a cargo-purifier lockfile"),
+        }
+        for name, (lock, cargo_lock, expected) in cases.items():
+            with self.subTest(name):
+                message = self.refusal(lock, cargo_lock)
+                self.assertIn(expected, message)
+                self.assertIn("`cargo-purifier lock`", message)
 
 
 if __name__ == "__main__":

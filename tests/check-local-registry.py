@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Checks what the local-registry check produced: the purifier lockfile
-`cargo purify` wrote, and the publish request `cargo purify publish` sent.
+`cargo-purifier lock` wrote, and the publish request `cargo-purifier publish`
+sent.
 
 Usage: check-local-registry.py <lockfile> <index url> <dl template>
            <git dependency url> <upload> <authorization> <crate>
@@ -19,7 +20,7 @@ assert lock["registries"] == {source: {"dl": dl}}, lock["registries"]
 assert git["git"]["url"] == git_url and git["git"]["submodules"] is True, git
 assert git["git"]["leaveDotGit"] is False and git["git"]["commitObject"] is None, git
 assert git["hash"].startswith("sha256-") and git["path"] == "git/" + git["git"]["rev"], git
-assert lock["packages"]["app"] == {"bins": ["app"], "lib": None, "manifest": "Cargo.toml"}, lock["packages"]
+assert lock["packages"]["app"] == {"bins": ["app"], "lib": None}, lock["packages"]
 
 body = Path(upload).read_bytes()
 length = int.from_bytes(body[:4], "little")

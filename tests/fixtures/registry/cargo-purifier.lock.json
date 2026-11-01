@@ -1,13 +1,13 @@
 {
   "cargoLock": "sha256-ZxzAh/MqhTr0tWTeg6rJRXkTLhD8w+0qKwUTmn3DoRU=",
+  "contentHash": "sha256-4P0r+PUTTDz/zSHN5h+zSe8/iAdnTgoQUpGsdM7uWIg=",
   "git": [],
   "packages": {
     "counter": {
       "bins": [
         "counter"
       ],
-      "lib": null,
-      "manifest": "Cargo.toml"
+      "lib": null
     }
   },
   "registries": {

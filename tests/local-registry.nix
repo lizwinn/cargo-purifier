@@ -3,19 +3,20 @@
 # The lock run and the publish step, in the sandbox and without the
 # network. The check sets up a cargo registry of its own (a git index, and
 # an HTTP server on 127.0.0.1 for downloads and publishing) and a git
-# repository. It then runs `cargo purify` on a workspace that takes a crate
-# from each, and `cargo purify publish` of a crate Nix packaged to the
+# repository. It then runs `cargo-purifier lock` on a workspace that takes a crate
+# from each, and `cargo-purifier publish` of a crate Nix packaged to the
 # registry.
 {
   pkgs,
-  cargo-purify,
+  # The cargo-purifier package.
+  cargo-purifier,
   # A .crate file buildCargoProject packaged: greet 0.1.0.
   crate,
 }:
 pkgs.runCommand "local-registry"
   {
     nativeBuildInputs = [
-      cargo-purify
+      cargo-purifier
       pkgs.cargo
       pkgs.rustc
       pkgs.git
@@ -93,15 +94,15 @@ pkgs.runCommand "local-registry"
     EOF
     echo 'fn main() { println!("{} {}", gitdep::name(), tiny::answer()); }' >app/src/main.rs
 
-    cargo-purify --manifest-path app/Cargo.toml
+    cargo-purifier lock --manifest-path app/Cargo.toml
 
     # A relock from scratch reproduces the lockfile byte for byte.
     mv app/cargo-purifier.lock.json first.lock.json
-    cargo-purify --manifest-path app/Cargo.toml
+    cargo-purifier lock --manifest-path app/Cargo.toml
     cmp first.lock.json app/cargo-purifier.lock.json
 
     CARGO_REGISTRIES_LOCAL_TOKEN=local-registry-token \
-      cargo-purify publish --manifest-path app/Cargo.toml --registry local \
+      cargo-purifier publish --manifest-path app/Cargo.toml --registry local \
       --crate ${crate}/greet-0.1.0.crate
 
     python3 ${./check-local-registry.py} app/cargo-purifier.lock.json "file://$PWD/index" "$dl" \

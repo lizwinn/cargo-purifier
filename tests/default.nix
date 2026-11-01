@@ -2,116 +2,192 @@
 #
 # The flake's checks. Every one builds in the sandbox; the only network
 # access is the fixed-output fetches of locked crates and git checkouts.
+# conformance-relock and conformance-rebuild need the network or a Nix
+# daemon, so they are CI jobs of those names (.github/workflows/check.yml).
 {
   pkgs,
-  # The flake's default package overlay, which adds buildCargoProject.
-  overlay,
-  # The cargo wrapper.
-  cargo,
+  # lib.cargo-purifier.buildCargoProject.
+  buildCargoProject,
+  # The cargo-purifier package: the command, the cargo wrapper and
+  # rust-analyzer.
+  cargo-purifier,
   # ripgrep's source, pinned in tests/dependencies.
   ripgrep,
 }:
 let
   inherit (pkgs) lib;
+  inherit (pkgs.stdenv.hostPlatform) system;
 
-  withOverlay = pkgs.extend overlay;
-
-  # Every fixture builds the way a consumer's package does: through
-  # buildCargoProject of a package set the overlay applies to.
-  inherit (withOverlay) buildCargoProject;
+  build = args: buildCargoProject ({ inherit pkgs; } // args);
 
   registryUrls = import ../nix/lib/registry.nix { inherit lib; };
 
-  # A binary with a crate from a registry other than crates.io, whose
-  # download template has markers. Its lockfiles are written by hand: the
-  # registry's index does not exist, and the build never reads it.
-  registry = buildCargoProject { src = ./fixtures/registry; };
+  refuses = import ./refuses.nix { inherit pkgs; };
 
-  # A binary with an ssh:// git dependency. Its lockfiles are written by
-  # hand, with the dependency recorded under its HTTPS URL as `cargo purify`
-  # records it.
-  ssh = buildCargoProject { src = ./fixtures/ssh; };
+  # A workspace with a library from crates.io, a binary with a git
+  # dependency, and a C library, locked by tests/relock-fixtures.sh.
+  workspace = build { src = ./fixtures/workspace; };
 
-  # A workspace with a library from crates.io and a binary with a git
-  # dependency, locked by tests/relock-fixtures.sh.
-  workspace = buildCargoProject { src = ./fixtures/workspace; };
-
-  # The same workspace with `cargo test` in its builds.
-  checked = buildCargoProject {
+  # The same workspace with `cargo test` in its package builds.
+  checked = build {
     src = ./fixtures/workspace;
     doCheck = true;
   };
 
-  # The workspace's purifier lockfile beside a Cargo.lock it was not made
-  # from.
-  stale = buildCargoProject {
-    src = ./fixtures/workspace;
-    cargoLock = ./fixtures/stale/Cargo.lock;
+  # A binary with a crate from a registry other than crates.io, whose
+  # download template has markers. Its lockfiles are written by hand: the
+  # registry's index does not exist, and the build never reads it.
+  registry = build { src = ./fixtures/registry; };
+
+  # A binary with an ssh:// git dependency. Its lockfiles are written by
+  # hand, with the dependency recorded under its HTTPS URL as
+  # `cargo-purifier lock` records it.
+  ssh = build { src = ./fixtures/ssh; };
+
+  # The workspace fixture without either lockfile in its source, built from
+  # the lockfiles beside it.
+  external = build {
+    src = builtins.path {
+      name = "workspace-without-lockfiles";
+      path = ./fixtures/workspace;
+      filter =
+        path: _:
+        !(lib.elem (baseNameOf path) [
+          "cargo-purifier.lock.json"
+          "Cargo.lock"
+        ]);
+    };
+    lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
+    cargoLock = ./fixtures/workspace/Cargo.lock;
   };
+
+  workspaceLock = lib.importJSON ./fixtures/workspace/cargo-purifier.lock.json;
+
+  sri =
+    hex:
+    builtins.convertHash {
+      hash = hex;
+      hashAlgo = "sha256";
+      toHashFormat = "sri";
+    };
+
+  # A lockfile changed by hand, with the content hash `cargo-purifier lock`
+  # would have written for it, so that only the change itself is wrong.
+  rehashed =
+    lock:
+    lock
+    // {
+      contentHash = sri (
+        builtins.hashString "sha256" (builtins.toJSON (removeAttrs lock [ "contentHash" ]))
+      );
+    };
+
+  lockText = value: builtins.toFile "cargo-purifier.lock.json" (builtins.toJSON value);
+
+  workspaceRefuses =
+    name: lockFile: expected:
+    refuses name {
+      inherit lockFile expected;
+      cargoLock = ./fixtures/workspace/Cargo.lock;
+    };
 
   pass = name: pkgs.runCommand name { } "touch $out";
 
-  # The workspace fixture with its purifier lockfile changed by `change`.
-  withLock =
-    change:
-    buildCargoProject {
-      src = ./fixtures/workspace;
-      lockFile = builtins.toFile "cargo-purifier.lock.json" (
-        builtins.toJSON (change (lib.importJSON ./fixtures/workspace/cargo-purifier.lock.json))
-      );
-    };
-
-  # Lockfiles that must fail evaluation. A malformed file and a tampered
-  # hash fail in ways tryEval cannot observe, so tests/negative.sh covers
-  # them.
-  rejected = {
-    stale = stale;
-    missing-git-entry = withLock (lock: lock // { git = [ ]; });
-    missing-field = withLock (lock: removeAttrs lock [ "packages" ]);
-    wrong-format = withLock (lock: lock // { version = 2; });
-    not-a-lockfile = withLock (_: [ ]);
-    missing-registry-entry = buildCargoProject {
-      src = ./fixtures/registry;
-      lockFile = builtins.toFile "cargo-purifier.lock.json" (
-        builtins.toJSON (
-          lib.importJSON ./fixtures/registry/cargo-purifier.lock.json // { registries = { }; }
-        )
-      );
-    };
-  };
-
-  evaluates =
-    project:
-    (builtins.tryEval (
-      lib.concatMapStrings (package: package.drvPath) (lib.attrValues project.packages)
-    )).success;
-
   realWorld = import ./projects/ripgrep.nix {
-    inherit pkgs buildCargoProject cargo;
+    inherit pkgs cargo-purifier;
+    buildCargoProject = buildCargoProject;
     src = ripgrep;
   };
 in
 realWorld
 // {
-  # hello runs, with its crates.io and git dependencies.
-  workspace = pkgs.runCommand "workspace" { } ''
-    output=$(${lib.getExe workspace.packages.hello})
-    if [ "$output" != "hello from 2 crates and 1.5" ]; then
-      echo "hello printed: $output" >&2
-      exit 1
-    fi
+  # The purifier contract.
+
+  conformance-stale = refuses "conformance-stale" {
+    lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
+    cargoLock = ./fixtures/stale/Cargo.lock;
+    expected = "was made from a different Cargo.lock. Run `cargo-purifier lock`";
+  };
+
+  conformance-tampered = workspaceRefuses "conformance-tampered" (lockText (
+    workspaceLock
+    // {
+      git = map (
+        entry: entry // { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; }
+      ) workspaceLock.git;
+    }
+  )) "was changed after `cargo-purifier lock` wrote it";
+
+  conformance-missing = workspaceRefuses "conformance-missing" (lockText (
+    rehashed (workspaceLock // { git = [ ]; })
+  )) "has no hash for the git dependency ryu. Run `cargo-purifier lock`";
+
+  conformance-malformed =
+    workspaceRefuses "conformance-malformed"
+      (builtins.toFile "cargo-purifier.lock.json" ''{ "version": 1, '')
+      "run `cargo-purifier lock` to write it again";
+
+  conformance-offline = import ./conformance-offline.nix {
+    inherit pkgs cargo-purifier;
+    prefetched = import ../nix/lib/tool-prefetch.nix {
+      nixpkgs = pkgs.path;
+      inherit system;
+      lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
+      cargoLock = ./fixtures/workspace/Cargo.lock;
+      tools = cargo-purifier;
+    };
+  };
+
+  conformance-external = pkgs.runCommand "conformance-external" { } ''
+    test "$(${lib.getExe external.packages.hello})" = "hello from 2 crates and 1.5"
     touch $out
   '';
 
-  workspace-check = checked.packages.hello;
+  # More lockfiles evaluation refuses, each with the command that fixes it.
+
+  refuses-missing-field = workspaceRefuses "refuses-missing-field" (lockText (
+    rehashed (removeAttrs workspaceLock [ "packages" ])
+  )) "lacks packages. Run `cargo-purifier lock`";
+
+  refuses-other-format = workspaceRefuses "refuses-other-format" (lockText (
+    rehashed (workspaceLock // { version = 2; })
+  )) "reads format 1. Run `cargo-purifier lock`";
+
+  refuses-not-a-lockfile = workspaceRefuses "refuses-not-a-lockfile" (lockText [
+  ]) "is not a cargo-purifier lockfile. Run `cargo-purifier lock`";
+
+  refuses-missing-registry = refuses "refuses-missing-registry" {
+    lockFile = lockText (
+      rehashed (lib.importJSON ./fixtures/registry/cargo-purifier.lock.json // { registries = { }; })
+    );
+    cargoLock = ./fixtures/registry/Cargo.lock;
+    expected = "has no entry for the registry sparse+https://registry.invalid/index/. Run `cargo-purifier lock`";
+  };
+
+  # The fixtures.
+
+  # hello runs, with its crates.io and git dependencies.
+  workspace = pkgs.runCommand "workspace" { } ''
+    test "$(${lib.getExe workspace.packages.hello})" = "hello from 2 crates and 1.5"
+    touch $out
+  '';
+
+  # hello with `cargo test` in its build, which conformance-rebuild also
+  # builds twice.
+  workspace-hello = checked.packages.hello;
+
+  # The workspace test run in the sandbox.
+  workspace-tests = workspace.tests;
 
   # counter runs, with itoa from the fixture's own registry.
   registry = pkgs.runCommand "registry" { } ''
-    output=$(${lib.getExe registry.packages.counter})
-    if [ "$output" != "counted 42" ]; then
-      echo "counter printed: $output" >&2
-      exit 1
-    fi
+    test "$(${lib.getExe registry.packages.counter})" = "counted 42"
+    touch $out
+  '';
+
+  # tell runs, with ryu from an ssh:// git dependency fetched over HTTPS.
+  ssh = pkgs.runCommand "ssh" { } ''
+    test "$(${lib.getExe ssh.packages.tell})" = "told 2.5"
     touch $out
   '';
 
@@ -142,49 +218,6 @@ realWorld
     else
       throw "registry-urls: ${builtins.toJSON failures}";
 
-  # The wrapper on the workspace fixture, with the vendored sources its own
-  # expression builds.
-  interactive = import ./interactive.nix {
-    inherit pkgs cargo;
-    vendor = import ../nix/lib/tool-vendor.nix {
-      nixpkgs = pkgs.path;
-      inherit (pkgs.stdenv.hostPlatform) system;
-      lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
-      cargoLock = ./fixtures/workspace/Cargo.lock;
-    };
-  };
-
-  # The .crate that `cargo purify publish` has Nix build.
-  publish-crate = import ../nix/lib/tool-crate.nix {
-    nixpkgs = pkgs.path;
-    inherit (pkgs.stdenv.hostPlatform) system;
-    root = toString ./fixtures/workspace;
-    package = "greet";
-  };
-
-  # tell runs, with ryu from an ssh:// git dependency fetched over HTTPS.
-  ssh = pkgs.runCommand "ssh" { } ''
-    output=$(${lib.getExe ssh.packages.tell})
-    if [ "$output" != "told 2.5" ]; then
-      echo "tell printed: $output" >&2
-      exit 1
-    fi
-    touch $out
-  '';
-
-  # The lock run and the publish step against a registry of the check's own.
-  local-registry = import ./local-registry.nix {
-    inherit pkgs;
-    inherit (withOverlay.cargo-purifier) cargo-purify;
-    crate = workspace.crates.greet;
-  };
-
-  # greet packaged as a .crate, which `cargo package` also builds.
-  crate = pkgs.runCommand "crate" { } ''
-    tar tzf ${workspace.crates.greet.crate} | grep -qx 'greet-0.1.0/src/lib.rs'
-    touch $out
-  '';
-
   # The workspace packages with a binary, or with a library cargo writes as
   # a file to install, have a package; greet has neither.
   packages =
@@ -199,7 +232,7 @@ realWorld
       throw "packages: ${toString (lib.attrNames workspace.packages)}";
 
   # Every output the lockfile names, at the path evaluation gives it. hello
-  # has a crate attribute too, but `cargo package` refuses its git
+  # has a release attribute too, but `cargo package` refuses its git
   # dependency, which has no version.
   outputs =
     let
@@ -208,15 +241,15 @@ realWorld
         "hello.bins.hello" = hello.bins.hello;
         "ffi.libs.libffi.so" = ffi.libs."libffi${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
         "ffi.libs.libffi.a" = ffi.libs."libffi.a";
-        "crates.ffi.crate" = workspace.crates.ffi.crate;
-        "crates.greet.crate" = workspace.crates.greet.crate;
+        "release.ffi.crate" = workspace.release.ffi.crate;
+        "release.greet.crate" = workspace.release.greet.crate;
       };
     in
     assert lib.attrNames hello.bins == [ "hello" ];
     assert lib.attrNames ffi.bins == [ ];
     assert lib.length (lib.attrNames ffi.libs) == 2;
     assert
-      lib.attrNames workspace.crates == [
+      lib.attrNames workspace.release == [
         "ffi"
         "greet"
         "hello"
@@ -228,24 +261,46 @@ realWorld
         '') named
       )}
       test -x ${hello.bins.hello}
+      tar tzf ${workspace.release.greet.crate} | grep -qx 'greet-0.1.0/src/lib.rs'
       touch $out
     '';
 
-  # The parsing, URL and publish logic of `cargo purify`.
+  # `fetches` lists every download as a purifier library entry: the
+  # crates.io crate itoa as a file entry, and the ryu checkout as a git
+  # entry.
+  fetches =
+    let
+      inherit (workspace) fetches;
+      files = lib.filter (entry: entry ? url) fetches;
+      gits = lib.filter (entry: entry ? git) fetches;
+    in
+    assert map (entry: entry.path) files == [ "itoa-1.0.18" ];
+    assert lib.all (entry: entry.mirrors == [ ] && lib.hasPrefix "sha256-" entry.hash) files;
+    assert map (entry: entry.git.url) gits == [ "https://github.com/dtolnay/ryu" ];
+    assert lib.length fetches == 2;
+    pass "fetches";
+
+  # The release that `cargo-purifier publish` has Nix build.
+  publish-release = import ../nix/lib/tool-release.nix {
+    nixpkgs = pkgs.path;
+    inherit system;
+    root = toString ./fixtures/workspace;
+    lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
+    package = "greet";
+  };
+
+  # The lock run and the publish step against a registry of the check's own.
+  local-registry = import ./local-registry.nix {
+    inherit pkgs cargo-purifier;
+    crate = workspace.release.greet;
+  };
+
+  # The parsing, URL, lockfile and publish logic of `cargo-purifier`.
   unit = pkgs.runCommand "unit" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-    cp ${./test_cargo_purify.py} test_cargo_purify.py
-    PYTHONPATH=${../pkgs/cargo-purify} python3 -m unittest -v test_cargo_purify
+    cp ${./test_cargo_purifier.py} test_cargo_purifier.py
+    PYTHONPATH=${../pkgs/cargo-purifier} python3 -m unittest -v test_cargo_purifier
     touch $out
   '';
 
-  inherit cargo;
+  inherit cargo-purifier;
 }
-// lib.mapAttrs' (
-  name: project:
-  lib.nameValuePair "rejects-${name}" (
-    if evaluates project then
-      throw "rejects-${name}: the lockfile evaluated, and buildCargoProject should have refused it"
-    else
-      pass "rejects-${name}"
-  )
-) rejected

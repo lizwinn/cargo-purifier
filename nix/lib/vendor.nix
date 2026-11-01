@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
-# The vendored sources of a workspace: every crate its Cargo.lock names,
-# fetched by the hashes the two lockfiles record, in the layout of
-# `cargo vendor`. Its `.cargo/config.toml` replaces each registry and git
+# `vendor`, the vendored sources of a workspace: every crate its Cargo.lock
+# names, fetched by the hashes the two lockfiles record, in the layout of
+# `cargo vendor`; and `fetches`, the same downloads as entries of the
+# purifier library. The `.cargo/config.toml` of `vendor` replaces each registry and git
 # source with the directory `cargo-vendor-dir`, which nixpkgs'
 # cargoSetupHook and the cargo wrapper point at the store path.
 #
@@ -84,8 +85,9 @@ let
     ) lock.importedPackages
   );
 
-  # A credentialed fetchgit reaches private repositories.
-  imported = (rustPlatform.importCargoLock.override { inherit fetchgit; }) {
+  # The fetchers a consumer passes, such as a fetchurl for a mirror or a
+  # credentialed fetchgit, reach crates.io and git downloads too.
+  imported = (rustPlatform.importCargoLock.override { inherit fetchurl fetchgit; }) {
     lockFileContents = importedLock;
     inherit (lock) outputHashes;
   };
@@ -104,17 +106,21 @@ let
     else
       plain;
 
+  registryUrl =
+    package:
+    registry.downloadUrl {
+      inherit (lock.registryOf package.source) dl;
+      inherit (package) name version;
+      checksum = lock.checksumOf package;
+    };
+
   registryCrate =
     package:
     let
       checksum = lock.checksumOf package;
       tarball = fetchurl {
         name = "crate-${package.name}-${package.version}.tar.gz";
-        url = registry.downloadUrl {
-          inherit (lock.registryOf package.source) dl;
-          inherit (package) name version;
-          inherit checksum;
-        };
+        url = registryUrl package;
         sha256 = checksum;
       };
     in
@@ -129,33 +135,63 @@ let
   # The `registry` value of a source replacement: the index URL, which
   # keeps the `sparse+` prefix and drops `registry+`.
   indexOf = lib.removePrefix "registry+";
+
+  sri =
+    hex:
+    builtins.convertHash {
+      hash = hex;
+      hashAlgo = "sha256";
+      toHashFormat = "sri";
+    };
+
+  # A file entry of the purifier library for a crate download.
+  fileEntry = path: url: package: {
+    inherit path url;
+    mirrors = [ ];
+    hash = sri (lock.checksumOf package);
+  };
 in
-runCommand "cargo-vendor-dir" { } ''
-  mkdir -p $out/.cargo
-  for entry in ${imported}/*; do
-    ln -s "$entry" "$out/$(basename "$entry")"
-  done
-  rm $out/Cargo.lock
-  ln -s ${cargoLock} $out/Cargo.lock
-  cp ${imported}/.cargo/config.toml $out/.cargo/config.toml
-  chmod u+w $out/.cargo/config.toml
+{
+  # Every download of the build, as purifier library entries: a file entry
+  # per registry crate, at the URL the build fetches it from, and a git
+  # entry per checkout.
+  fetches =
+    map (
+      package:
+      fileEntry "${package.name}-${package.version}"
+        "https://static.crates.io/crates/${package.name}/${package.version}/download"
+        package
+    ) (lib.filter (package: !(isGit package)) lock.importedPackages)
+    ++ map (package: fileEntry (dirName package) (registryUrl package) package) lock.registryPackages
+    ++ lock.gitEntries;
 
-  ${lib.concatMapStrings (rewrite: ''
-    substituteInPlace $out/.cargo/config.toml \
-      --replace-fail ${lib.escapeShellArg "\"git+${rewrite.fetched}"} ${lib.escapeShellArg "\"git+${rewrite.original}"} \
-      --replace-fail ${lib.escapeShellArg "git = \"${rewrite.fetched}\""} ${lib.escapeShellArg "git = \"${rewrite.original}\""}
-  '') rewrites}
+  vendor = runCommand "cargo-vendor-dir" { } ''
+    mkdir -p $out/.cargo
+    for entry in ${imported}/*; do
+      ln -s "$entry" "$out/$(basename "$entry")"
+    done
+    rm $out/Cargo.lock
+    ln -s ${cargoLock} $out/Cargo.lock
+    cp ${imported}/.cargo/config.toml $out/.cargo/config.toml
+    chmod u+w $out/.cargo/config.toml
 
-  ${lib.concatMapStrings (package: ''
-    ln -s ${registryCrate package} $out/${dirName package}
-  '') lock.registryPackages}
+    ${lib.concatMapStrings (rewrite: ''
+      substituteInPlace $out/.cargo/config.toml \
+        --replace-fail ${lib.escapeShellArg "\"git+${rewrite.fetched}"} ${lib.escapeShellArg "\"git+${rewrite.original}"} \
+        --replace-fail ${lib.escapeShellArg "git = \"${rewrite.fetched}\""} ${lib.escapeShellArg "git = \"${rewrite.original}\""}
+    '') rewrites}
 
-  ${lib.concatMapStrings (source: ''
-    cat >>$out/.cargo/config.toml <<'EOF'
+    ${lib.concatMapStrings (package: ''
+      ln -s ${registryCrate package} $out/${dirName package}
+    '') lock.registryPackages}
 
-    [source.${toJSON source}]
-    registry = ${toJSON (indexOf source)}
-    replace-with = "vendored-sources"
-    EOF
-  '') registrySources}
-''
+    ${lib.concatMapStrings (source: ''
+      cat >>$out/.cargo/config.toml <<'EOF'
+
+      [source.${toJSON source}]
+      registry = ${toJSON (indexOf source)}
+      replace-with = "vendored-sources"
+      EOF
+    '') registrySources}
+  '';
+}

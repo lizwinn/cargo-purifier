@@ -25,13 +25,12 @@
     };
   };
 
-  # `nix run github:nix-purifiers/cargo-purifier -- <command>` runs cargo
-  # through the purifier's wrapper: `cargo purify` writes the lockfile, and
-  # every other command reads the locked sources offline.
+  # `nix run github:nix-purifiers/cargo-purifier -- <command>` runs the
+  # `cargo-purifier` command: lock, prefetch or publish.
   perSystem =
     { config, ... }:
     {
-      packages.default = config.packages.cargo;
+      packages.default = config.packages.cargo-purifier;
     };
 
   partitionedAttrs.checks = "checks";
@@ -58,8 +57,8 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              overlay = self.overlays.default;
-              inherit (self.packages.${system}) cargo;
+              inherit (self.lib.cargo-purifier) buildCargoProject;
+              inherit (self.packages.${system}) cargo-purifier;
               inherit (inputs) ripgrep;
             };
             treefmt.programs.nixfmt.enable = true;

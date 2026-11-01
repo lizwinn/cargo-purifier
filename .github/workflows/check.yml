@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs the test suite on both systems the flake supports, on every push to
-# main and on every pull request: the flake's checks, the lockfiles a build
-# must refuse, a relock of the fixtures that must reproduce them byte for
-# byte, and the README's quickstart on ripgrep.
+# main and on every pull request. The flake's checks include the purifier
+# contract's conformance checks that the sandbox can run; the two that need
+# the network or a Nix daemon are the jobs of their names here.
 name: check
 
 on:
@@ -26,21 +26,48 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Flake checks
         run: nix flake check --print-build-logs
-      - name: Lockfiles a build must refuse
-        run: nix shell 'nixpkgs#xxd' 'nixpkgs#python3' -c tests/negative.sh
+      - name: Downloads whose hash the lockfiles get wrong
+        run: nix shell 'nixpkgs#python3' -c tests/negative.sh
+
+  # Relocking a fixture reproduces its lockfile byte for byte.
+  conformance-relock:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
       - name: Relock the fixtures
         run: |
-          tests/relock-fixtures.sh
+          nix shell 'nixpkgs#python3' -c tests/relock-fixtures.sh
           git diff --exit-code
       # The quickstart word for word, with the pushed commit, on ripgrep
-      # 14.1.1: the lockfile must match the one the integration checks build.
-      - name: Quickstart on ripgrep
+      # 14.1.1: the lockfile must match the one the ripgrep checks build.
+      - name: Relock ripgrep through the quickstart
         if: github.event_name == 'push'
         run: |
           git clone --quiet https://github.com/BurntSushi/ripgrep "$RUNNER_TEMP/ripgrep"
           cd "$RUNNER_TEMP/ripgrep"
           git checkout --quiet 4649aa9700619f94cf9c66876e9549d83420e16c
           SECONDS=0
-          nix run "github:${{ github.repository }}/${{ github.sha }}" -- purify
-          echo "cargo purify took ${SECONDS}s"
+          nix run "github:${{ github.repository }}/${{ github.sha }}" -- lock
+          echo "cargo-purifier lock took ${SECONDS}s"
           cmp cargo-purifier.lock.json "$GITHUB_WORKSPACE/tests/projects/ripgrep/cargo-purifier.lock.json"
+
+  # `nix build --rebuild` of a fixture gives the same output.
+  conformance-rebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build hello, then rebuild it
+        run: |
+          system=$(nix eval --raw --impure --expr builtins.currentSystem)
+          nix build --no-link ".#checks.$system.workspace-hello"
+          nix build --no-link --rebuild ".#checks.$system.workspace-hello"

@@ -1,17 +1,24 @@
 # SPDX-License-Identifier: MIT
-"""cargo purify: lock a cargo workspace for Nix, and publish what Nix packaged.
+"""cargo-purifier: lock a cargo workspace for Nix, prefetch it, and publish
+what Nix packaged.
 
-`cargo purify` writes cargo-purifier.lock.json at the workspace root.
+`cargo-purifier lock` writes cargo-purifier.lock.json at the workspace root.
 Cargo.lock already pins every registry download by name, version and
 checksum, so the purifier lockfile records only what Cargo.lock leaves out:
 the NAR hash of each git dependency's checkout, the download URL template
 of each registry other than crates.io, and the workspace's packages with
-their binaries. It also records the hash of the Cargo.lock it read, so a
-Nix build can tell when the two files no longer belong together.
+their binaries and libraries. It also records the hash of the Cargo.lock it
+read, so a Nix build can tell when the two files no longer belong
+together, and the hash of its own content, so a hand edit shows.
 
-`cargo purify publish` has Nix package a workspace package as a .crate,
-the way `cargo package` does in the sandbox, and uploads that file to the
-registry with the registry's publish API.
+`cargo-purifier prefetch` builds the vendored sources and the tools of the
+everyday loop and the editor in the Nix store, and keeps them alive with a
+garbage-collector root at target/cargo-purifier/prefetch.
+
+`cargo-purifier publish` uploads the .crate that Nix packages for a
+workspace package in the sandbox, with the registry's publish API.
+
+cargo runs this command as `cargo purifier <command>` too.
 """
 
 import argparse
@@ -51,6 +58,38 @@ def run(command, capture=True, cwd=None):
 
 def sri_sha256(data):
     return "sha256-" + base64.b64encode(hashlib.sha256(data).digest()).decode()
+
+
+def content_hash(lock):
+    """The hash of a lockfile's content without its own `contentHash`: the
+    SHA-256 of the JSON that Nix's builtins.toJSON writes for the same
+    value, with sorted keys and no whitespace."""
+    rest = {key: value for key, value in lock.items() if key != "contentHash"}
+    return sri_sha256(json.dumps(rest, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+
+
+def lock_path_of(options, root):
+    """The purifier lockfile: `--lockfile`, or the one at the workspace root."""
+    return Path(options.lockfile).resolve() if options.lockfile else root / LOCK_NAME
+
+
+def checked_lock(root, path):
+    """The purifier lockfile at `path`, refused when it is missing,
+    malformed, edited by hand, or made from another Cargo.lock."""
+    fix = "Run `cargo-purifier lock` to write it again."
+    if not path.exists():
+        raise Failure(f"{path} is missing. Run `cargo-purifier lock` first.")
+    try:
+        lock = json.loads(path.read_text())
+    except ValueError as error:
+        raise Failure(f"{path} is not valid JSON ({error}). {fix}") from error
+    if not isinstance(lock, dict) or lock.get("version") != FORMAT:
+        raise Failure(f"{path} is not a cargo-purifier lockfile of format {FORMAT}. {fix}")
+    if lock.get("contentHash") != content_hash(lock):
+        raise Failure(f"{path} was changed after `cargo-purifier lock` wrote it. {fix}")
+    if lock.get("cargoLock") != sri_sha256((root / "Cargo.lock").read_bytes()):
+        raise Failure(f"{path} was made from a different Cargo.lock. Run `cargo-purifier lock` and commit both files.")
+    return lock
 
 
 def cargo_home():
@@ -212,7 +251,6 @@ def lock(options):
         targets = package["targets"]
         libs = [t for t in targets if LIB_KINDS & set(t["kind"])]
         packages[package["name"]] = {
-            "manifest": Path(package["manifest_path"]).relative_to(root).as_posix(),
             "bins": sorted(t["name"] for t in targets if "bin" in t["kind"]),
             # The library target, whose name the files cargo writes for it
             # carry, with '-' as '_'.
@@ -225,7 +263,7 @@ def lock(options):
     cargo_lock_bytes = (root / "Cargo.lock").read_bytes()
     cargo_lock = tomllib.loads(cargo_lock_bytes.decode())
 
-    lock_path = root / LOCK_NAME
+    lock_path = lock_path_of(options, root)
     previous_git = {}
     previous_registries = {}
     if lock_path.exists():
@@ -253,7 +291,7 @@ def lock(options):
     for url, rev in sorted(checkouts):
         digest = previous_git.get((url, rev))
         if digest is None:
-            print(f"cargo purify: hashing {url} at {rev}", file=sys.stderr)
+            print(f"cargo-purifier: hashing {url} at {rev}", file=sys.stderr)
             digest = git_hash(url, rev)
         git.append({
             "path": f"git/{rev}",
@@ -265,13 +303,13 @@ def lock(options):
     config = CargoConfig(root)
     registries = {}
     for source in sorted(registry_sources):
-        print(f"cargo purify: reading the index configuration of {source}", file=sys.stderr)
+        print(f"cargo-purifier: reading the index configuration of {source}", file=sys.stderr)
         try:
             dl = index_config(source, config)["dl"]
         except (Failure, OSError, subprocess.CalledProcessError, KeyError, ValueError):
             if source not in previous_registries:
                 raise
-            print(f"cargo purify: keeping the recorded configuration of {source}", file=sys.stderr)
+            print(f"cargo-purifier: keeping the recorded configuration of {source}", file=sys.stderr)
             dl = previous_registries[source]["dl"]
         registries[source] = {"dl": dl}
 
@@ -282,8 +320,9 @@ def lock(options):
         "registries": registries,
         "packages": packages,
     }
+    result["contentHash"] = content_hash(result)
     lock_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    print(f"cargo purify: wrote {lock_path}", file=sys.stderr)
+    print(f"cargo-purifier: wrote {lock_path}", file=sys.stderr)
 
 
 def version_req(requirement):
@@ -383,15 +422,69 @@ def publish_body(metadata, crate_bytes):
     )
 
 
-def nix_crate(root, package):
-    """The .crate file Nix packages for a workspace package."""
-    out = run([
-        "nix-build", "--no-out-link", os.environ["CARGO_PURIFY_CRATE_EXPR"],
-        "--arg", "nixpkgs", os.environ["CARGO_PURIFY_NIXPKGS"],
-        "--argstr", "system", os.environ["CARGO_PURIFY_SYSTEM"],
-        "--argstr", "root", str(root),
-        "--argstr", "package", package,
+def nix_build(expression, *args):
+    """nix-build of one of the purifier's tool expressions, with the nixpkgs
+    and system this command was built with."""
+    return run([
+        "nix-build", os.path.join(os.environ["CARGO_PURIFIER_NIX_LIB"], expression),
+        "--arg", "nixpkgs", os.environ["CARGO_PURIFIER_NIXPKGS"],
+        "--argstr", "system", os.environ["CARGO_PURIFIER_SYSTEM"],
+        *args,
     ]).strip()
+
+
+def path_arg(path):
+    """A Nix expression for an absolute path, for nix-build --arg."""
+    return "/. + " + json.dumps(str(path))
+
+
+def tools_arg():
+    """A Nix expression for the cargo-purifier package this command runs
+    in, which the prefetch keeps alive, or null outside it."""
+    tools = os.environ.get("CARGO_PURIFIER_TOOLS")
+    return f"builtins.storePath {json.dumps(tools)}" if tools else "null"
+
+
+def vendor_stamp(root, lock_path):
+    """What the cargo wrapper records for the lockfiles it built the
+    vendored sources from: the output of `cat <lockfiles> | sha256sum`."""
+    data = lock_path.read_bytes() + (root / "Cargo.lock").read_bytes()
+    return hashlib.sha256(data).hexdigest() + "  -"
+
+
+def prefetch(options):
+    root, _ = workspace_root(options.manifest_path)
+    lock_path = lock_path_of(options, root)
+    checked_lock(root, lock_path)
+    state = root / "target" / "cargo-purifier"
+    state.mkdir(parents=True, exist_ok=True)
+    print("cargo-purifier: building the vendored sources and the tools in the Nix store", file=sys.stderr)
+    out = Path(nix_build(
+        "tool-prefetch.nix",
+        "--arg", "lockFile", path_arg(lock_path),
+        "--arg", "cargoLock", path_arg(root / "Cargo.lock"),
+        "--arg", "tools", tools_arg(),
+        "--out-link", str(state / "prefetch"),
+    ))
+    # The cargo wrapper reads the vendored sources from these two files
+    # without calling Nix.
+    vendor = state / "vendor"
+    if vendor.is_symlink() or vendor.exists():
+        vendor.unlink()
+    vendor.symlink_to(os.path.realpath(out / "vendor"))
+    (state / "stamp").write_text(vendor_stamp(root, lock_path) + "\n")
+    print(f"cargo-purifier: prefetched; {state / 'prefetch'} keeps everything alive, "
+          "and the everyday loop and the editor now work offline", file=sys.stderr)
+
+
+def nix_release(root, lock_path, package):
+    """The .crate file Nix packages for a workspace package."""
+    out = nix_build(
+        "tool-release.nix", "--no-out-link",
+        "--argstr", "root", str(root),
+        "--arg", "lockFile", path_arg(lock_path),
+        "--argstr", "package", package,
+    )
     crates = list(Path(out).glob("*.crate"))
     if len(crates) != 1:
         raise Failure(f"{out} holds no single .crate file")
@@ -401,21 +494,20 @@ def nix_crate(root, package):
 def publish(options):
     root, _ = workspace_root(options.manifest_path)
     config = CargoConfig(root)
-    lock_data = json.loads((root / LOCK_NAME).read_text()) if (root / LOCK_NAME).exists() else None
 
     if options.crate:
         crate_path = Path(options.crate)
     else:
-        if lock_data is None:
-            raise Failure(f"{root / LOCK_NAME} is missing. Run `cargo purify` first.")
+        lock_path = lock_path_of(options, root)
+        lock_data = checked_lock(root, lock_path)
         package = options.package
         if package is None:
             names = sorted(lock_data["packages"])
             if len(names) != 1:
                 raise Failure(f"the workspace has several packages ({', '.join(names)}); choose one with --package")
             package = names[0]
-        print(f"cargo purify: packaging {package} with Nix", file=sys.stderr)
-        crate_path = nix_crate(root, package)
+        print(f"cargo-purifier: packaging {package} with Nix", file=sys.stderr)
+        crate_path = nix_release(root, lock_path, package)
     crate_bytes = crate_path.read_bytes()
 
     if options.registry:
@@ -435,7 +527,7 @@ def publish(options):
 
     manifest, readme_text = crate_contents(crate_bytes)
     metadata = publish_metadata(manifest, readme_text, target_index)
-    print(f"cargo purify: {crate_path} is {metadata['name']} {metadata['vers']}", file=sys.stderr)
+    print(f"cargo-purifier: {crate_path} is {metadata['name']} {metadata['vers']}", file=sys.stderr)
     if options.dry_run:
         print(json.dumps(metadata, indent=2, sort_keys=True))
         return
@@ -461,29 +553,29 @@ def publish(options):
         raise Failure(f"the registry refused the upload ({error.code}): {details}") from error
     for kind, items in (answer.get("warnings") or {}).items():
         for item in items:
-            print(f"cargo purify: warning from the registry ({kind}): {item}", file=sys.stderr)
-    print(f"cargo purify: published {metadata['name']} {metadata['vers']}", file=sys.stderr)
+            print(f"cargo-purifier: warning from the registry ({kind}): {item}", file=sys.stderr)
+    print(f"cargo-purifier: published {metadata['name']} {metadata['vers']}", file=sys.stderr)
 
 
 def main(argv):
     args = argv[1:]
     # cargo runs an external subcommand with the subcommand's name first.
-    if args[:1] == ["purify"]:
+    if args[:1] == ["purifier"]:
         args = args[1:]
-    parser = argparse.ArgumentParser(prog="cargo purify", description=__doc__.splitlines()[0])
-    parser.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
-    commands = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(prog="cargo-purifier", description=__doc__.splitlines()[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    locker = commands.add_parser("lock", help="write cargo-purifier.lock.json")
+    fetcher = commands.add_parser("prefetch", help="build what the everyday loop and the editor need, for offline work")
     publisher = commands.add_parser("publish", help="upload the .crate Nix packages for a workspace package")
-    publisher.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
+    for command in (locker, fetcher, publisher):
+        command.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
+        command.add_argument("--lockfile", help="the purifier lockfile, when it lives outside the workspace")
     publisher.add_argument("-p", "--package", help="the workspace package to publish")
     publisher.add_argument("--registry", help="a registry configured in cargo's configuration; crates.io by default")
     publisher.add_argument("--crate", help="a .crate file to upload instead of the one Nix packages")
     publisher.add_argument("--dry-run", action="store_true", help="print the publish metadata and upload nothing")
     options = parser.parse_args(args)
-    if options.command == "publish":
-        publish(options)
-    else:
-        lock(options)
+    {"lock": lock, "prefetch": prefetch, "publish": publish}[options.command](options)
 
 
 if __name__ == "__main__":
@@ -492,6 +584,6 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as error:
         if error.stderr:
             sys.stderr.write(error.stderr)
-        sys.exit(f"cargo purify: {' '.join(error.cmd)} failed")
+        sys.exit(f"cargo-purifier: {' '.join(error.cmd)} failed")
     except Failure as error:
-        sys.exit(f"cargo purify: {error}")
+        sys.exit(f"cargo-purifier: {error}")
