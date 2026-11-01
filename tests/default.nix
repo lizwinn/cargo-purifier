@@ -6,7 +6,7 @@
 # daemon, so they are CI jobs of those names (.github/workflows/check.yml).
 {
   pkgs,
-  # lib.cargo-purifier.buildCargoProject and lib.cargo-purifier.readLock.
+  # buildCargoProject from the package set, and lib.cargo-purifier.readLock.
   buildCargoProject,
   readLock,
   # The cargo-purifier package: the command, the cargo wrapper and
@@ -19,7 +19,7 @@ let
   inherit (pkgs) lib;
   inherit (pkgs.stdenv.hostPlatform) system;
 
-  build = args: buildCargoProject ({ inherit pkgs; } // args);
+  build = buildCargoProject;
 
   registryUrls = import ../nix/lib/registry.nix { inherit lib; };
 

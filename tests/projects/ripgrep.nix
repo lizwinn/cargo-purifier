@@ -18,7 +18,7 @@ let
 
   lockFile = ./ripgrep/cargo-purifier.lock.json;
 
-  project = buildCargoProject { inherit pkgs src lockFile; };
+  project = buildCargoProject { inherit src lockFile; };
 
   vendor = import ../../nix/lib/tool-vendor.nix {
     nixpkgs = pkgs.path;

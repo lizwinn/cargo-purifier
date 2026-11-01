@@ -57,7 +57,8 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              inherit (self.lib.cargo-purifier) buildCargoProject readLock;
+              inherit ((pkgs.extend self.overlays.default)) buildCargoProject;
+              inherit (self.lib.cargo-purifier) readLock;
               inherit (self.packages.${system}) cargo-purifier;
               inherit (inputs) ripgrep;
             };

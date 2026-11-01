@@ -25,12 +25,12 @@ expect_failure() {
   local expression="
     let
       flake = builtins.getFlake \"git+file://$repo\";
-      pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+      pkgs = import flake.inputs.nixpkgs {
+        system = builtins.currentSystem;
+        overlays = [ flake.overlays.default ];
+      };
     in
-    (flake.lib.cargo-purifier.buildCargoProject {
-      inherit pkgs;
-      src = $work/$case;
-    }).packages.hello"
+    (pkgs.buildCargoProject { src = $work/$case; }).packages.hello"
   if nix build --impure --no-link --expr "$expression" 2>"$work/$case.log"; then
     echo "FAIL $case: the build succeeded" >&2
     failures=$((failures + 1))

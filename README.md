@@ -20,7 +20,15 @@ nix run github:nix-purifiers/cargo-purifier -- lock
 git add Cargo.lock cargo-purifier.lock.json
 ```
 
-Build it with Nix from a flake:
+Build it with Nix. The flake's `overlays.default` adds `buildCargoProject`
+to a package set, and a package written for `callPackage` takes it by
+name:
+
+```nix
+# package.nix
+{ buildCargoProject }:
+(buildCargoProject { src = ./.; }).packages.hello
+```
 
 ```nix
 {
@@ -30,27 +38,26 @@ Build it with Nix from a flake:
   outputs = { nixpkgs, cargo-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      project = cargo-purifier.lib.cargo-purifier.buildCargoProject {
-        inherit pkgs;
-        src = ./.;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ cargo-purifier.overlays.default ];
       };
     in
     {
-      packages.${system}.hello = project.packages.hello;
-      checks.${system}.tests = project.tests;
+      packages.${system}.hello = pkgs.callPackage ./package.nix { };
+      checks.${system}.tests = (pkgs.buildCargoProject { src = ./.; }).tests;
     };
 }
 ```
 
-For the everyday loop and the editor, put the `cargo-purifier` package on
+For the development loop and the editor, put the `cargo-purifier` package on
 the `PATH`, for example in a development shell, and prefetch once:
 
 ```zsh
 cargo-purifier prefetch
 ```
 
-## Everyday loop
+## Development loop
 
 The `cargo-purifier` package holds the command, a `cargo` wrapper and a
 `rust-analyzer` wrapper. In a workspace with a `cargo-purifier.lock.json`,
@@ -76,8 +83,7 @@ lockfiles do not record stops, and names `cargo-purifier lock`.
 
 ### The Nix build
 
-`lib.cargo-purifier.buildCargoProject { pkgs, src, fetchers ? { }, ... }`
-returns:
+`buildCargoProject { src, lockFile ? …, fetchers ? { }, ... }` returns:
 
 | Attribute | What it is |
 |---|---|
@@ -114,8 +120,10 @@ system.
 `fetchers.fetchurl` and `fetchers.fetchgit` replace nixpkgs' fetchers for
 every download, crates.io included, for a mirror or credentials.
 `nix/lib/build-cargo-project.nix` documents the other arguments: `doCheck`
-also runs each package's tests in its build, `srcFilter` chooses the files
-of a path `src` the builds see, and `rustPlatform` is the Rust toolchain.
+also runs each package's tests in its build, and `srcFilter` chooses the
+files of a path `src` the builds see. The builder takes the packages it
+builds with by name, so `buildCargoProject.override { rustPlatform = …; }`
+builds with another Rust toolchain.
 
 ### A lockfile outside the source
 
@@ -153,10 +161,10 @@ writes it. `--dry-run` prints the metadata and uploads nothing.
   `importCargoLock`, which places each crate of a checkout by name and
   resolves `workspace = true` inheritance in vendored manifests.
 
-## Offline work
+## Working offline
 
 `cargo-purifier prefetch` builds, in the Nix store, everything the
-everyday loop and the editor need: the vendored sources, the
+development loop and the editor need: the vendored sources, the
 `cargo-purifier` package with its cargo, rustc, C compiler and
 rust-analyzer, and the standard library's sources. It keeps them alive with
 a garbage-collector root at `target/cargo-purifier/prefetch`, and records
@@ -176,7 +184,7 @@ wrapper, so it loads the workspace and its dependencies from the vendored
 sources, and it reads the standard library's sources from the package
 set's rust-src.
 
-## Errors and fixes
+## Troubleshooting
 
 | Mistake | What happens |
 |---|---|
@@ -189,7 +197,7 @@ set's rust-src.
 | Offline, with sources never prefetched | The wrapper stops with Nix's reason, and says to run `cargo-purifier prefetch` while online. |
 | A hash that does not match the download | Nix reports a hash mismatch for the crate or checkout. The upstream changed what it serves under that version or commit; `cargo-purifier lock` records what it serves now. |
 
-## Sources supported and refused
+## Supported language repositories
 
 | Source in Cargo.lock | How the build gets it |
 |---|---|
@@ -244,11 +252,11 @@ Add a `flake.nix` beside `Cargo.toml` to build `rg` with Nix:
   outputs = { nixpkgs, cargo-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      ripgrep = cargo-purifier.lib.cargo-purifier.buildCargoProject {
-        inherit pkgs;
-        src = ./.;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ cargo-purifier.overlays.default ];
       };
+      ripgrep = pkgs.buildCargoProject { src = ./.; };
     in
     {
       packages.${system}.default = ripgrep.packages.ripgrep;
@@ -257,7 +265,7 @@ Add a `flake.nix` beside `Cargo.toml` to build `rg` with Nix:
 }
 ```
 
-`nix build` then leaves `rg` at `result/bin/rg`. For the everyday loop,
+`nix build` then leaves `rg` at `result/bin/rg`. For the development loop,
 prefetch once with the `cargo-purifier` package on the `PATH`, and run
 `cargo build`, `cargo test` and rust-analyzer as usual, online or offline.
 
@@ -283,9 +291,11 @@ cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml --lockfile ./ripgre
   outputs = { nixpkgs, cargo-purifier, ripgrep, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      project = cargo-purifier.lib.cargo-purifier.buildCargoProject {
-        inherit pkgs;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ cargo-purifier.overlays.default ];
+      };
+      project = pkgs.buildCargoProject {
         src = ripgrep;
         lockFile = ./ripgrep.lock.json;
       };

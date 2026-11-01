@@ -21,7 +21,14 @@
 #   packages.<package>.libs."<file>"    $out/lib/lib<name>.so or .a
 #   release.<package>.crate             $out/<package>-<version>.crate
 {
-  pkgs,
+  lib,
+  stdenv,
+  runCommand,
+  # The Rust toolchain.
+  rustPlatform,
+  # The fetchers of registry crates and git checkouts.
+  fetchurl,
+  fetchgit,
   # The source tree.
   src,
   # The workspace root inside `src`, as readLock takes it.
@@ -30,10 +37,6 @@
   lock,
   # The entries of `lock` for this system.
   entries,
-  # Fetchers in place of nixpkgs' own, as the purifier library's fetchEntry
-  # takes them: `fetchurl` for registry downloads behind a mirror or
-  # credentials, and `fetchgit` for private git repositories.
-  fetchers ? { },
   # Runs `cargo test --package <package>` in each package's build too.
   doCheck ? false,
   # Which files of a path `src` the builds see. The default leaves out
@@ -43,22 +46,22 @@
     let
       name = baseNameOf path;
     in
-    !(type == "directory" && name == "target") && !(pkgs.lib.hasPrefix "result" name)
+    !(type == "directory" && name == "target") && !(lib.hasPrefix "result" name)
   ),
-  # The Rust toolchain.
-  rustPlatform ? pkgs.rustPlatform,
 }:
 let
-  inherit (pkgs) lib stdenv;
-
   inWorkspace = workspace != ".";
 
   vendor = import ./vendor.nix {
-    inherit lib rustPlatform entries;
-    inherit (pkgs) runCommand;
+    inherit
+      lib
+      rustPlatform
+      runCommand
+      fetchurl
+      fetchgit
+      entries
+      ;
     cargoLock = (if inWorkspace then src + "/${workspace}" else src) + "/Cargo.lock";
-    fetchurl = fetchers.fetchurl or pkgs.fetchurl;
-    fetchgit = fetchers.fetchgit or pkgs.fetchgit;
   };
 
   # Runs cargo in the workspace root, when it is not the root of `src`.

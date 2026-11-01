@@ -20,8 +20,15 @@ let
     inherit src lockFile;
   };
   project = import ./project.nix {
-    inherit pkgs lock;
-    inherit src;
+    inherit (pkgs)
+      lib
+      stdenv
+      runCommand
+      rustPlatform
+      fetchurl
+      fetchgit
+      ;
+    inherit src lock;
     inherit (lock) entries;
   };
 in
