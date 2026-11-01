@@ -21,15 +21,25 @@ nix run github:nix-purifiers/cargo-purifier -- lock
 git add Cargo.lock cargo-purifier.lock.json
 ```
 
-Build it with Nix. The flake's `overlays.default` adds the scope
-`pkgs.cargo-purifier` to a package set, and a package written for
-`callPackage` takes the scope by name and calls its `buildCargoProject`:
+Build it with Nix from the same directory. The flake's `overlays.default`
+adds the scope `pkgs.cargo-purifier` to a package set, and
+`buildCargoProject` of that scope builds the workspace in the current
+directory. The name `hello` stands for a package of the workspace:
 
-```nix
-# package.nix
-{ cargo-purifier }:
-(cargo-purifier.buildCargoProject { src = ./.; }).packages.hello
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.hello'
 ```
+
+A flake can package the workspace by calling the builder directly. It can
+live in the repository of the workspace or in another one:
 
 ```nix
 {
@@ -43,10 +53,11 @@ Build it with Nix. The flake's `overlays.default` adds the scope
         inherit system;
         overlays = [ cargo-purifier.overlays.default ];
       };
+      project = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
     in
     {
-      packages.${system}.hello = pkgs.callPackage ./package.nix { };
-      checks.${system}.tests = (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).tests;
+      packages.${system}.hello = project.packages.hello;
+      checks.${system}.tests = project.tests;
     };
 }
 ```
@@ -258,38 +269,25 @@ only in `Cargo.lock`.
 
 [ripgrep](https://github.com/BurntSushi/ripgrep) is a cargo workspace whose
 `rg` binary comes from its root package. To work on it with
-cargo-purifier, lock it once at the root of a checkout:
+cargo-purifier, lock it once at the root of a checkout, and build it from
+there:
 
 ```zsh
 git clone https://github.com/BurntSushi/ripgrep
 cd ripgrep
 nix run github:nix-purifiers/cargo-purifier -- lock
-```
-
-Add a `flake.nix` beside `Cargo.toml` to build `rg` with Nix:
-
-```nix
-{
-  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
-  inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
-
-  outputs = { nixpkgs, cargo-purifier, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ cargo-purifier.overlays.default ];
-      };
-      ripgrep = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
-    in
-    {
-      packages.${system}.default = ripgrep.packages.ripgrep;
-      checks.${system}.tests = ripgrep.tests;
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
     };
-}
+  in
+  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.ripgrep'
 ```
 
-`nix build` then leaves `rg` at `result/bin/rg`. For the development loop,
+`nix build` leaves `rg` at `result/bin/rg`. For the development loop,
 prefetch once with the `cargo-purifier` package on the `PATH`, and run
 `cargo build`, `cargo test` and rust-analyzer as usual, online or offline.
 
