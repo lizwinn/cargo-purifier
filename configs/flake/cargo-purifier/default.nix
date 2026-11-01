@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-{ ... }:
+{ closure-lib, ... }:
 {
   config,
   inputs,
@@ -8,7 +8,12 @@
 }:
 {
 
-  imports = [ inputs.flake-parts.flakeModules.partitions ];
+  imports = [
+    inputs.flake-parts.flakeModules.partitions
+    closure-lib.caisson.modules.flake."purifier/purifier-packages"
+  ];
+
+  purifier.scope = "cargo-purifier";
 
   debug = false;
   caisson = {
@@ -19,22 +24,16 @@
     # The scope is the `default` entry of this flake's package overlay
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`. The `packages` output holds the derivations of
-    # the scope below, because the scope also holds the builder, which is a
-    # function.
-    nixpkgs = {
-      packages.export.enabled = false;
-    };
+    # `overlays.default`. The `purifier-packages` module publishes the
+    # derivations of the scope as `packages`.
   };
 
   # `nix run github:nix-purifiers/cargo-purifier -- <command>` runs the
   # `cargo-purifier` command: lock, prefetch or publish.
   perSystem =
-    { config, pkgs, ... }:
+    { config, ... }:
     {
-      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.cargo-purifier // {
-        default = config.packages.cargo-purifier;
-      };
+      packages.default = config.packages.cargo-purifier;
     };
 
   partitionedAttrs.checks = "checks";
