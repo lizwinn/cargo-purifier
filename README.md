@@ -175,6 +175,12 @@ network cut off.
 `cargo clean` removes the root with the rest of `target`, so prefetch
 again before the next stretch of offline work.
 
+The toolchain that a prefetch keeps is the Rust of the package set the
+`cargo-purifier` package was built from. A `rust-toolchain.toml` file in the
+workspace names a toolchain that rustup downloads, and cargo-purifier
+builds with the package set's Rust instead; to build with another one,
+pass it to `buildCargoProject.override { rustPlatform = …; }`.
+
 ## Editor
 
 Point the editor at the `rust-analyzer` of the `cargo-purifier` package,
