@@ -220,21 +220,18 @@ only in `Cargo.lock`.
 | `registries.<source>.dl` | a registry's download URL template is in its index's `config.json`, which evaluation cannot fetch without import-from-derivation |
 | `packages.<package>.bins`, `.lib` | the outputs: cargo finds binaries in `src/main.rs` and `src/bin/` without manifest entries, members may be globs, and the library's name and crate types decide its file names |
 
-## Real-world projects
+## Examples
 
-- [ripgrep](https://github.com/BurntSushi/ripgrep) 14.1.1, commit
-  `4649aa9700619f94cf9c66876e9549d83420e16c`, is a workspace of ten
-  packages and 61 locked crates, with its purifier lockfile kept outside
-  its source in `tests/projects/ripgrep/`. CI builds `rg` in the sandbox,
-  and runs the developer loop through the wrapper offline: `cargo build`,
-  `cargo run`, `cargo test --package grep-cli`, rust-analyzer, and a
-  dependency added without a relock. CI also runs the quickstart's lock on
-  it with the pushed commit, in 3 to 4 seconds with an empty cargo cache,
-  and compares the lockfile byte for byte. The `grep-cli` tests and
-  rust-analyzer also passed on a developer's machine.
-
-Working through ripgrep made the wrapper name a dependency missing from
-`Cargo.lock`, which used to end in cargo's offline resolution error.
+Besides the fixtures, CI locks and builds real projects. One example is
+[ripgrep](https://github.com/BurntSushi/ripgrep) 14.1.1, at commit
+`4649aa9700619f94cf9c66876e9549d83420e16c`, a workspace of ten packages
+whose purifier lockfile lives outside its source, in
+`tests/projects/ripgrep/`. CI builds `rg` in the sandbox, and runs
+`cargo build`, `cargo run`, `cargo test --package grep-cli` and
+rust-analyzer on it through the wrapper, offline. CI also locks ripgrep
+with the quickstart's command at the pushed commit, in 3 to 4 seconds with
+an empty cargo cache, and requires the lockfile to match the committed one
+byte for byte.
 
 ### Tests
 

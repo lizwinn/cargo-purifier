@@ -254,11 +254,11 @@
         "nixpkgs-lib": "nixpkgs-lib_4"
       },
       "locked": {
-        "lastModified": 1793530068,
-        "narHash": "sha256-bb7+FHnMY3NNLOchsS3NKS9QAs/zVh1flBComCEObdc=",
+        "lastModified": 1793557141,
+        "narHash": "sha256-bGCW8ZJoGk2+zouD/EiY+sQFrW7rg5FBysPxPllFJEM=",
         "owner": "nix-purifiers",
         "repo": "purifier",
-        "rev": "369e8de017eb2c18df0630257d713268c7f8c333",
+        "rev": "8d05f8d533ac99ef8c6146f211e67ab75688e745",
         "type": "github"
       },
       "original": {
