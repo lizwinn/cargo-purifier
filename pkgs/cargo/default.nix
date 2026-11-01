@@ -71,16 +71,14 @@ writeShellApplication {
       esac
     done
 
-    case "$sub" in
-      build | b | check | c | run | r | test | t | bench | doc | d | clippy | rustc | rustdoc | tree | metadata | package | fix) ;;
-      *) exec "$real" "$@" ;;
-    esac
-
     if [ "''${CARGO_PURIFIER:-1}" = 0 ]; then
       exec "$real" "$@"
     fi
 
-    manifest=$("$real" locate-project --workspace --message-format plain 2>/dev/null) || exec "$real" "$@"
+    manifest=$("$real" locate-project --workspace --message-format plain 2>/dev/null) || {
+      echo "cargo-purifier: warning: no cargo-purifier.lock.json found; running cargo impurely. Run \`cargo-purifier lock\` to use Nix-resolved dependencies." >&2
+      exec "$real" "$@"
+    }
     root=''${manifest%/Cargo.toml}
     # cargo reads Cargo.lock only from the workspace root, so a Cargo.lock
     # kept outside the tree is copied there.
@@ -90,9 +88,19 @@ writeShellApplication {
       chmod u+w "$root/Cargo.lock"
     fi
     lock=''${CARGO_PURIFIER_LOCKFILE:-$root/cargo-purifier.lock.json}
-    if [ ! -f "$lock" ] || [ ! -f "$root/Cargo.lock" ]; then
+    if [ ! -e "$lock" ]; then
+      echo "cargo-purifier: warning: no cargo-purifier.lock.json found; running cargo impurely. Run \`cargo-purifier lock\` to use Nix-resolved dependencies." >&2
       exec "$real" "$@"
     fi
+    if [ ! -f "$root/Cargo.lock" ]; then
+      echo "cargo-purifier: Cargo.lock is missing beside an existing purifier lock; run cargo-purifier lock" >&2
+      exit 101
+    fi
+    case "$sub" in
+      build | b | check | c | run | r | test | t | bench | doc | d | clippy | rustc | rustdoc | tree | metadata | package | fix) ;;
+      *) exec "$real" "$@" ;;
+    esac
+
     lock=$(realpath "$lock")
 
     # stop <message>: the purifier refuses the command.

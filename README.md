@@ -1,8 +1,11 @@
 # cargo-purifier
 
-A command, a cargo wrapper and a Nix library that build cargo workspaces in
-the Nix sandbox from their lockfiles. The workspace needs no Nix files of
-its own.
+cargo-purifier keeps Cargo's development workflow on locked,
+Nix-resolved dependencies. Use the normal build and test commands in your
+working tree; building the project itself in the Nix sandbox is an
+optional next step.
+
+It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
 cargo keeps planning and compiling the build. `Cargo.lock` already pins
 every registry download by name, version and checksum, so cargo-purifier
@@ -11,71 +14,44 @@ reuses it, and writes `cargo-purifier.lock.json` beside it only for what
 [nix-purifiers](https://nix-purifiers.github.io) and meets the
 [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
+## Installation
+
+Install the integration into your Nix profile once:
+
+```sh
+nix profile install 'github:nix-purifiers/cargo-purifier#cargo' 'github:nix-purifiers/cargo-purifier#cargo-purifier'
+```
+
+This installs the `cargo` wrapper. Use it for the locked
+development workflow below. With no purifier lockfile, it warns on standard
+error and runs the ordinary tool with impure resolution.
+
+`nix shell` makes an integration available temporarily instead of installing
+it. Keep using the activation steps below where a project environment or
+prefetched cache is required.
+
 ## Quickstart
 
-At the workspace root, lock the workspace and commit both lockfiles to
-the repository, which is the setup we recommend:
+Install Nix, then run the following from your existing project's root.
+The setup prepares the locked dependencies and the integration that
+Cargo's normal commands use:
 
 ```zsh
-nix run github:nix-purifiers/cargo-purifier -- lock
-git add Cargo.lock cargo-purifier.lock.json
-```
-
-Build it with Nix from the same directory. The flake's `overlays.default`
-adds the scope `pkgs.cargo-purifier` to a package set, and
-`buildCargoProject` of that scope builds the workspace in the current
-directory. The name `hello` stands for a package of the workspace:
-
-```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.hello'
-```
-
-This uses the purifier's pinned nixpkgs, matching the lock command above.
-To build with ambient `<nixpkgs>` from your Nix search path instead,
-replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
-Both forms need no Nix files in your project. The build tool and language
-versions must match the lockfile; with ambient nixpkgs, lock with the
-purifier from that package set or pass a compatible toolchain to the builder.
-
-A flake can package the workspace by calling the builder directly. It can
-live in the repository of the workspace or in another one:
-
-```nix
-{
-  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
-  inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
-
-  outputs = { nixpkgs, cargo-purifier, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ cargo-purifier.overlays.default ];
-      };
-      project = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
-    in
-    {
-      packages.${system}.hello = project.packages.hello;
-      checks.${system}.tests = project.tests;
-    };
-}
-```
-
-For the development loop and the editor, put the `cargo-purifier` package
-of the scope on the `PATH`, for example in a development shell as
-`pkgs.cargo-purifier.cargo-purifier`, and prefetch once:
-
-```zsh
+nix shell 'github:nix-purifiers/cargo-purifier#cargo' github:nix-purifiers/cargo-purifier
+cargo-purifier lock
 cargo-purifier prefetch
+cargo build
+cargo test
 ```
+
+Commit the lockfiles that the lock command writes, including the build
+tool's own lockfile when it has one. Keep using the project's usual build,
+test and editor commands with this setup. Nix provides the locked
+dependencies; the development commands above run outside the Nix sandbox.
+No project Nix files are needed for this workflow.
+
+Sandboxed builds of the whole project are an optional
+[next step](#building-the-project-with-nix).
 
 ## Development loop
 
@@ -197,6 +173,70 @@ writes it. `--dry-run` prints the metadata and uploads nothing.
   `importCargoLock`, which places each crate of a checkout by name and
   resolves `workspace = true` inheritance in vendored manifests.
 
+## Building the project with Nix
+
+Once the native development workflow is working, you can also build and
+test the whole project in the Nix sandbox. For this step, keep a flake or
+another Nix build definition in the project's repository, or maintain an
+external packaging repository that points at its sources and lockfiles.
+The builder consumes the same lockfiles as the development workflow.
+
+A flake can package the workspace by calling the builder directly. It can
+live in the repository of the workspace or in another one:
+
+```nix
+{
+  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
+  inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
+
+  outputs = { nixpkgs, cargo-purifier, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ cargo-purifier.overlays.default ];
+      };
+      project = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
+    in
+    {
+      packages.${system}.hello = project.packages.hello;
+      checks.${system}.tests = project.tests;
+    };
+}
+```
+
+For the development loop and the editor, put the `cargo-purifier` package
+of the scope on the `PATH`, for example in a development shell as
+`pkgs.cargo-purifier.cargo-purifier`, and prefetch once:
+
+```zsh
+cargo-purifier prefetch
+```
+
+### One-off builds without a project Nix file
+
+For an ad hoc build, the builder can also be evaluated directly from the
+project root. Replace the example package name with one from your project:
+
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.hello'
+```
+
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
+
 ## Working offline
 
 `cargo-purifier prefetch` builds, in the Nix store, everything the
@@ -271,6 +311,11 @@ only in `Cargo.lock`.
 | `packages.<package>.bins`, `.lib` | the outputs: cargo finds binaries in `src/main.rs` and `src/bin/` without manifest entries, members may be globs, and the library's name and crate types decide its file names |
 
 ## Examples
+
+For day-to-day work on these projects, use the native-tool setup and
+commands in [Quickstart](#quickstart) and [Development loop](#development-loop).
+The Nix expressions below show optional sandboxed packaging of those
+projects.
 
 ### ripgrep in its own checkout
 
