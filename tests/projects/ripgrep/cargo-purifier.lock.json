@@ -1,0 +1,105 @@
+{
+  "cargoLock": "sha256-Gpny8E2WQRI4N5SF42YjoZsBWNlEZ5bm2F1YdGAj9EE=",
+  "git": [],
+  "packages": {
+    "globset": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "globset"
+      },
+      "manifest": "crates/globset/Cargo.toml"
+    },
+    "grep": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep"
+      },
+      "manifest": "crates/grep/Cargo.toml"
+    },
+    "grep-cli": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_cli"
+      },
+      "manifest": "crates/cli/Cargo.toml"
+    },
+    "grep-matcher": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_matcher"
+      },
+      "manifest": "crates/matcher/Cargo.toml"
+    },
+    "grep-pcre2": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_pcre2"
+      },
+      "manifest": "crates/pcre2/Cargo.toml"
+    },
+    "grep-printer": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_printer"
+      },
+      "manifest": "crates/printer/Cargo.toml"
+    },
+    "grep-regex": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_regex"
+      },
+      "manifest": "crates/regex/Cargo.toml"
+    },
+    "grep-searcher": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "grep_searcher"
+      },
+      "manifest": "crates/searcher/Cargo.toml"
+    },
+    "ignore": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "ignore"
+      },
+      "manifest": "crates/ignore/Cargo.toml"
+    },
+    "ripgrep": {
+      "bins": [
+        "rg"
+      ],
+      "lib": null,
+      "manifest": "Cargo.toml"
+    }
+  },
+  "registries": {},
+  "version": 1
+}

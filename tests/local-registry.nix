@@ -95,6 +95,11 @@ pkgs.runCommand "local-registry"
 
     cargo-purify --manifest-path app/Cargo.toml
 
+    # A relock from scratch reproduces the lockfile byte for byte.
+    mv app/cargo-purifier.lock.json first.lock.json
+    cargo-purify --manifest-path app/Cargo.toml
+    cmp first.lock.json app/cargo-purifier.lock.json
+
     CARGO_REGISTRIES_LOCAL_TOKEN=local-registry-token \
       cargo-purify publish --manifest-path app/Cargo.toml --registry local \
       --crate ${crate}/greet-0.1.0.crate

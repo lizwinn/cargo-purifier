@@ -8,6 +8,8 @@
   overlay,
   # The cargo wrapper.
   cargo,
+  # ripgrep's source, pinned in tests/dependencies.
+  ripgrep,
 }:
 let
   inherit (pkgs) lib;
@@ -48,8 +50,49 @@ let
   };
 
   pass = name: pkgs.runCommand name { } "touch $out";
+
+  # The workspace fixture with its purifier lockfile changed by `change`.
+  withLock =
+    change:
+    buildCargoProject {
+      src = ./fixtures/workspace;
+      lockFile = builtins.toFile "cargo-purifier.lock.json" (
+        builtins.toJSON (change (lib.importJSON ./fixtures/workspace/cargo-purifier.lock.json))
+      );
+    };
+
+  # Lockfiles that must fail evaluation. A malformed file and a tampered
+  # hash fail in ways tryEval cannot observe, so tests/negative.sh covers
+  # them.
+  rejected = {
+    stale = stale;
+    missing-git-entry = withLock (lock: lock // { git = [ ]; });
+    missing-field = withLock (lock: removeAttrs lock [ "packages" ]);
+    wrong-format = withLock (lock: lock // { version = 2; });
+    not-a-lockfile = withLock (_: [ ]);
+    missing-registry-entry = buildCargoProject {
+      src = ./fixtures/registry;
+      lockFile = builtins.toFile "cargo-purifier.lock.json" (
+        builtins.toJSON (
+          lib.importJSON ./fixtures/registry/cargo-purifier.lock.json // { registries = { }; }
+        )
+      );
+    };
+  };
+
+  evaluates =
+    project:
+    (builtins.tryEval (
+      lib.concatMapStrings (package: package.drvPath) (lib.attrValues project.packages)
+    )).success;
+
+  realWorld = import ./projects/ripgrep.nix {
+    inherit pkgs buildCargoProject cargo;
+    src = ripgrep;
+  };
 in
-{
+realWorld
+// {
   # hello runs, with its crates.io and git dependencies.
   workspace = pkgs.runCommand "workspace" { } ''
     output=$(${lib.getExe workspace.packages.hello})
@@ -188,12 +231,21 @@ in
       touch $out
     '';
 
-  # A Cargo.lock that changed since `cargo purify` fails evaluation.
-  stale-lock =
-    if (builtins.tryEval stale.packages.hello.drvPath).success then
-      throw "stale-lock: a purifier lockfile beside a different Cargo.lock evaluated"
-    else
-      pass "stale-lock";
+  # The parsing, URL and publish logic of `cargo purify`.
+  unit = pkgs.runCommand "unit" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    cp ${./test_cargo_purify.py} test_cargo_purify.py
+    PYTHONPATH=${../pkgs/cargo-purify} python3 -m unittest -v test_cargo_purify
+    touch $out
+  '';
 
   inherit cargo;
 }
+// lib.mapAttrs' (
+  name: project:
+  lib.nameValuePair "rejects-${name}" (
+    if evaluates project then
+      throw "rejects-${name}: the lockfile evaluated, and buildCargoProject should have refused it"
+    else
+      pass "rejects-${name}"
+  )
+) rejected

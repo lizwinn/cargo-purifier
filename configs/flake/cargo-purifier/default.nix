@@ -60,6 +60,7 @@
               inherit pkgs;
               overlay = self.overlays.default;
               inherit (self.packages.${system}) cargo;
+              inherit (inputs) ripgrep;
             };
             treefmt.programs.nixfmt.enable = true;
           };

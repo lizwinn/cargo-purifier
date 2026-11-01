@@ -17,7 +17,15 @@
   cargoLock,
 }:
 let
-  lock = builtins.fromJSON (builtins.readFile lockFile);
+  lock = builtins.addErrorContext "while reading the cargo-purifier lockfile ${toString lockFile}; run `cargo purify` to write it again" (
+    builtins.fromJSON (builtins.readFile lockFile)
+  );
+
+  fields = [
+    "cargoLock"
+    "git"
+    "packages"
+  ];
 
   cargoLockHash = builtins.convertHash {
     hash = builtins.hashFile "sha256" cargoLock;
@@ -26,10 +34,16 @@ let
   };
 
   checked =
-    if (lock.version or null) != 1 then
+    if !(builtins.isAttrs lock) || (lock.version or null) == null then
+      throw "cargo-purifier: ${toString lockFile} is not a cargo-purifier lockfile. Run `cargo purify` to write it again."
+    else if (lock.version or null) != 1 then
       throw "cargo-purifier: ${toString lockFile} has format ${
         toString (lock.version or "unknown")
       }, and this cargo-purifier reads format 1. Run `cargo purify` with this cargo-purifier."
+    else if !(lib.all (field: lock ? ${field}) fields) then
+      throw "cargo-purifier: ${toString lockFile} lacks ${
+        lib.concatStringsSep ", " (lib.filter (field: !(lock ? ${field})) fields)
+      }. Run `cargo purify` to write it again."
     else if lock.cargoLock != cargoLockHash then
       throw "cargo-purifier: ${toString lockFile} was made from a different Cargo.lock. Run `cargo purify` and commit both files."
     else
@@ -77,12 +91,12 @@ in
   # The commit a git package's source names.
   inherit revOf;
 
-  # The URL a git checkout is fetched from: the URL in Cargo.lock, or its
-  # HTTPS form for an ssh:// dependency.
+  # The URL a git package's checkout is fetched from: the URL in Cargo.lock,
+  # or its HTTPS form for an ssh:// dependency.
   gitUrlOf =
-    rev:
-    (lib.findFirst (entry: entry.git.rev == rev)
-      (throw "cargo-purifier: ${toString lockFile} has no entry for the git commit ${rev}. Run `cargo purify`.")
+    package:
+    (lib.findFirst (entry: entry.git.rev == revOf package)
+      (throw "cargo-purifier: ${toString lockFile} has no hash for the git dependency ${package.name}. Run `cargo purify`.")
       checked.git
     ).git.url;
 

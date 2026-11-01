@@ -129,6 +129,26 @@ prints the reason and cargo resolves the usual way.
 The wrapper runs the package set's cargo and rustc. When no `cc` is on the
 `PATH`, rustc links with the package set's C compiler.
 
+rust-analyzer runs `cargo metadata` and `cargo check` through the cargo on
+its `PATH`. With the wrapper there, for example in a development shell,
+rust-analyzer loads the workspace and its dependencies from the vendored
+copy, offline.
+
+## Common mistakes
+
+| Mistake | What happens |
+|---|---|
+| `Cargo.lock` changed since `cargo purify` (an upgrade, or a hand edit) | The Nix build fails with "… was made from a different Cargo.lock. Run `cargo purify` and commit both files." The wrapper prints the same and runs plain cargo. |
+| A dependency added to `Cargo.toml` but not locked | The wrapper prints "Cargo.toml needs dependencies that Cargo.lock lacks, so cargo resolves the usual way. Run `cargo purify` afterwards to lock them." |
+| A git dependency missing from the purifier lockfile | The Nix build fails with "… has no hash for the git dependency <name>. Run `cargo purify`." |
+| A registry missing from the purifier lockfile | The Nix build fails with "… has no entry for the registry <source>. Run `cargo purify`." |
+| A malformed or incomplete purifier lockfile | The Nix build fails naming the file, with "run `cargo purify` to write it again". |
+| A hash that does not match the download | Nix reports a hash mismatch for the crate or checkout. Either the lockfile was edited, or the upstream changed what it serves under that version or commit; `cargo purify` records what upstream serves now. |
+
+`cargo purify` takes about a second for ripgrep's 61 crates when cargo's
+download cache is warm, and a rerun hashes only the git checkouts that
+changed.
+
 ## Publish
 
 ```zsh
@@ -229,6 +249,49 @@ bump changes only `Cargo.lock`, which then needs `cargo purify` again.
 - The wrapper finds the subcommand as the first argument that is neither an
   option nor the value of `--config`, `--color`, `-C`, `-Z` or `--explain`.
   An alias defined in cargo's configuration runs plain cargo.
+
+## Tested on
+
+- [ripgrep](https://github.com/BurntSushi/ripgrep) 14.1.1, commit
+  `4649aa9700619f94cf9c66876e9549d83420e16c`, is a workspace of ten
+  packages and 61 locked crates. CI builds `rg` in the sandbox, and runs
+  the developer loop through the wrapper offline: `cargo build`,
+  `cargo run`, `cargo test --package grep-cli`, rust-analyzer loading the
+  workspace, and a dependency added to `Cargo.toml` without a relock. CI
+  also runs the quickstart above on it with the pushed commit, and compares
+  the lockfile with `tests/projects/ripgrep/cargo-purifier.lock.json` byte
+  for byte.
+
+Working through ripgrep changed one thing. A dependency missing from
+`Cargo.lock` used to end in cargo's offline resolution error, and now the
+wrapper names the mistake and the command to run. rust-analyzer worked
+without a change.
+
+## Tests
+
+CI runs the whole suite on x86_64-linux and aarch64-linux.
+
+- Unit tests in `tests/test_cargo_purify.py` cover the parsing of
+  `Cargo.lock` sources, the HTTPS URL of an `ssh://` dependency, cargo's
+  configuration and credentials, and the publish request.
+- The `registry-urls` check covers cargo's rules for registry download
+  URLs.
+- Each source kind has a fixture. `workspace` has crates.io, git with
+  submodules, and path dependencies; `registry` has another registry; and
+  `ssh` has an `ssh://` git dependency.
+- The `local-registry` check runs the lock run and the publish step against
+  a registry and a git repository it sets up itself. Its relock from
+  scratch must reproduce the lockfile byte for byte.
+- The `interactive`, `outputs`, `ripgrep` and `ripgrep-develop` checks
+  cover the wrapper, the named outputs and the real project.
+- The `rejects-*` checks give evaluation lockfiles it must refuse: a stale
+  one, one missing a git or registry entry, one missing a field, one in
+  another format, and one that is not a lockfile at all.
+- `tests/negative.sh` builds the failures the flake's checks cannot
+  observe, a malformed lockfile and tampered hashes, and checks each error
+  message.
+- `tests/relock-fixtures.sh` relocks the fixtures, and CI requires the
+  result to match the committed files.
 
 ## Related work
 

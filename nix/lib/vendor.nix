@@ -45,7 +45,7 @@ let
       package:
       let
         original = sourceUrlOf package;
-        fetched = lock.gitUrlOf (lock.revOf package);
+        fetched = lock.gitUrlOf package;
       in
       lib.optional (original != fetched) { inherit original fetched; }
     ) (lib.filter isGit lock.importedPackages)
@@ -59,7 +59,7 @@ let
       let
         original = sourceUrlOf package;
       in
-      "git+" + lock.gitUrlOf (lock.revOf package) + lib.removePrefix "git+${original}" package.source
+      "git+" + lock.gitUrlOf package + lib.removePrefix "git+${original}" package.source
     else
       package.source;
 

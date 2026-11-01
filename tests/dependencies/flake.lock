@@ -107,11 +107,29 @@
         "type": "github"
       }
     },
+    "ripgrep": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1725848100,
+        "narHash": "sha256-gyWnahj1A+iXUQlQ1O1H1u7K5euYQOld9qWm99Vjaeg=",
+        "owner": "BurntSushi",
+        "repo": "ripgrep",
+        "rev": "4649aa9700619f94cf9c66876e9549d83420e16c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "BurntSushi",
+        "repo": "ripgrep",
+        "rev": "4649aa9700619f94cf9c66876e9549d83420e16c",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "caisson": "caisson",
         "flake-parts": "flake-parts_2",
         "nixpkgs": "nixpkgs",
+        "ripgrep": "ripgrep",
         "treefmt-nix": "treefmt-nix"
       }
     },

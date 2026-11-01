@@ -9,7 +9,8 @@
 # Every other command runs plain cargo, and so does every command when the
 # workspace has no purifier lockfile or CARGO_PURIFIER=0 is set. When the
 # vendored sources do not build, typically because Cargo.lock changed since
-# `cargo purify`, cargo warns and resolves the usual way.
+# `cargo purify`, or when a manifest needs a dependency Cargo.lock lacks,
+# the wrapper says so and cargo resolves the usual way.
 {
   lib,
   path,
@@ -98,6 +99,17 @@ writeShellApplication {
 
     sed "s|^directory = \"cargo-vendor-dir\"\$|directory = \"$vendor\"|" \
       "$vendor/.cargo/config.toml" >"$state/config.toml"
+
+    # A manifest that needs a dependency Cargo.lock lacks cannot resolve
+    # from the vendored sources: cargo finds no such package there, or wants
+    # to update Cargo.lock.
+    if ! "$real" --config "$state/config.toml" metadata --offline --locked --format-version 1 \
+      >/dev/null 2>"$state/metadata.log" &&
+      grep -q -e 'needs to be updated' -e 'no matching package named' "$state/metadata.log"; then
+      echo "cargo-purifier: Cargo.toml needs dependencies that Cargo.lock lacks, so cargo resolves the usual way. Run \`cargo purify\` afterwards to lock them." >&2
+      exec "$real" "$@"
+    fi
+
     exec "$real" --config "$state/config.toml" --offline "$@"
   '';
 }
