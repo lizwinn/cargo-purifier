@@ -174,8 +174,7 @@ for example `target/cargo-purifier/prefetch/tools/bin/rust-analyzer` after
 a prefetch. It runs `cargo metadata` and `cargo check` through the cargo
 wrapper, so it loads the workspace and its dependencies from the vendored
 sources, and it reads the standard library's sources from the package
-set's rust-src. On ripgrep it loads 18 crates and about 900,000 lines of
-dependency code in about four seconds.
+set's rust-src.
 
 ## Errors and fixes
 
@@ -203,7 +202,8 @@ dependency code in about four seconds.
 A path dependency outside the workspace root builds when `src` is a
 directory that holds both, and `workspace` names the workspace inside it,
 as in `{ src = ./.; workspace = "app"; }`. The builds use the package set's
-Rust toolchain, and do not read `rust-toolchain.toml`.
+Rust toolchain, and do not read `rust-toolchain.toml`. cargo-purifier runs
+on x86_64-linux and aarch64-linux.
 
 ### What the purifier lockfile holds
 
@@ -222,37 +222,83 @@ only in `Cargo.lock`.
 
 ## Examples
 
-Besides the fixtures, CI locks and builds real projects. One example is
-[ripgrep](https://github.com/BurntSushi/ripgrep) 14.1.1, at commit
-`4649aa9700619f94cf9c66876e9549d83420e16c`, a workspace of ten packages
-whose purifier lockfile lives outside its source, in
-`tests/projects/ripgrep/`. CI builds `rg` in the sandbox, and runs
-`cargo build`, `cargo run`, `cargo test --package grep-cli` and
-rust-analyzer on it through the wrapper, offline. CI also locks ripgrep
-with the quickstart's command at the pushed commit, in 3 to 4 seconds with
-an empty cargo cache, and requires the lockfile to match the committed one
-byte for byte.
+### ripgrep in its own checkout
 
-### Tests
+[ripgrep](https://github.com/BurntSushi/ripgrep) is a cargo workspace whose
+`rg` binary comes from its root package. To work on it with
+cargo-purifier, lock it once at the root of a checkout:
 
-CI runs the suite on x86_64-linux and aarch64-linux.
+```zsh
+git clone https://github.com/BurntSushi/ripgrep
+cd ripgrep
+nix run github:nix-purifiers/cargo-purifier -- lock
+```
 
-- The flake holds the contract's checks for stale, tampered, missing and
-  malformed lockfiles, for offline work after a prefetch, and for a
-  lockfile kept outside the source. CI runs the relock, update and rebuild
-  checks of the contract as jobs, because they need the network or a Nix
-  daemon. The `read-lock` check covers the shape of the lock in memory.
-- `refuses-*` checks give evaluation more lockfiles it must refuse, and
-  check each message.
-- Unit tests in `tests/test_cargo_purifier.py` cover the lockfile checks,
-  the parsing of `Cargo.lock` sources, `ssh://` URLs, cargo's configuration
-  and credentials, and the publish request.
-- Each source kind has a fixture: `workspace` (crates.io, git with
-  submodules, path), `registry`, `ssh`, and `outside` (a path dependency
-  outside the workspace root).
-- `local-registry` runs the lock and the publish against a registry and a
-  git repository it sets up itself, and relocks from scratch byte for byte.
-- `tests/negative.sh` covers downloads whose recorded hash is wrong.
+Add a `flake.nix` beside `Cargo.toml` to build `rg` with Nix:
+
+```nix
+{
+  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
+  inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
+
+  outputs = { nixpkgs, cargo-purifier, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      ripgrep = cargo-purifier.lib.cargo-purifier.buildCargoProject {
+        inherit pkgs;
+        src = ./.;
+      };
+    in
+    {
+      packages.${system}.default = ripgrep.packages.ripgrep;
+      checks.${system}.tests = ripgrep.tests;
+    };
+}
+```
+
+`nix build` then leaves `rg` at `result/bin/rg`. For the everyday loop,
+prefetch once with the `cargo-purifier` package on the `PATH`, and run
+`cargo build`, `cargo test` and rust-analyzer as usual, online or offline.
+
+### ripgrep packaged from outside
+
+A packaging flake can build ripgrep without changing ripgrep's repository.
+Keep the purifier lockfile in the packaging flake, and write it from a
+checkout of the release you package:
+
+```zsh
+cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml --lockfile ./ripgrep.lock.json
+```
+
+```nix
+{
+  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
+  inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
+  inputs.ripgrep = {
+    url = "github:BurntSushi/ripgrep/14.1.1";
+    flake = false;
+  };
+
+  outputs = { nixpkgs, cargo-purifier, ripgrep, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      project = cargo-purifier.lib.cargo-purifier.buildCargoProject {
+        inherit pkgs;
+        src = ripgrep;
+        lockFile = ./ripgrep.lock.json;
+      };
+    in
+    {
+      packages.${system}.ripgrep = project.packages.ripgrep;
+    };
+}
+```
+
+When ripgrep releases a new version, move the `ripgrep` input to it, run the
+same `cargo-purifier lock` on a checkout of that version, and commit both
+files.
 
 ## Credits
 
