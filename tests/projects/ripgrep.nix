@@ -23,8 +23,8 @@ let
   vendor = import ../../nix/lib/tool-vendor.nix {
     nixpkgs = pkgs.path;
     inherit (pkgs.stdenv.hostPlatform) system;
+    inherit src;
     inherit lockFile;
-    cargoLock = src + "/Cargo.lock";
   };
 in
 {

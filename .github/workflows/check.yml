@@ -56,6 +56,33 @@ jobs:
           echo "cargo-purifier lock took ${SECONDS}s"
           cmp cargo-purifier.lock.json "$GITHUB_WORKSPACE/tests/projects/ripgrep/cargo-purifier.lock.json"
 
+  # `cargo-purifier update` of a fixture that pins an old version leaves
+  # both lockfiles usable.
+  conformance-update:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Update the fixture that pins itoa 1.0.0
+        run: |
+          fixture="$RUNNER_TEMP/update"
+          cp -r tests/fixtures/update "$fixture"
+          tools=$(nix build --no-link --print-out-paths '.#cargo-purifier')
+          "$tools/bin/cargo-purifier" update --manifest-path "$fixture/Cargo.toml"
+          if grep -A1 '^name = "itoa"$' "$fixture/Cargo.lock" | grep -q '^version = "1.0.0"$'; then
+            echo "cargo-purifier update left itoa at 1.0.0" >&2
+            exit 1
+          fi
+          problems=$(nix eval --impure --json --expr \
+            "(builtins.getFlake \"git+file://$PWD\").lib.cargo-purifier.readLock { src = $fixture; }" \
+            --apply 'lock: lock.problems')
+          echo "problems after the update: $problems"
+          test "$problems" = "[]"
+
   # `nix build --rebuild` of a fixture gives the same output.
   conformance-rebuild:
     strategy:

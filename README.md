@@ -61,9 +61,11 @@ the two lockfiles, and run with `--offline`. Incremental compilation works
 as usual. Every other command, such as `update`, `add` or `publish`, runs
 plain cargo.
 
-To add or upgrade a dependency, run `cargo add` or `cargo update`, then
-`cargo-purifier lock`, and commit both lockfiles. `cargo-purifier lock`
-runs `cargo fetch`, which brings `Cargo.lock` up to date with the
+To add a dependency, run `cargo add`, then `cargo-purifier lock`. To
+upgrade, run `cargo-purifier update`, which runs `cargo update` for every
+package, or for the packages it names, and then locks the result. Commit
+both lockfiles either way. `cargo-purifier lock` keeps cargo's resolution:
+it runs `cargo fetch`, which brings `Cargo.lock` up to date with the
 manifests and changes no more than it must. It then hashes each git
 checkout with `nix-prefetch-git`, submodules included, and reads the index
 configuration of each registry other than crates.io. A relock of an
@@ -84,13 +86,30 @@ returns:
 | `packages.<package>.libs."lib<name>.so"`, `."lib<name>.a"` | the libraries of `cdylib`, `dylib` and `staticlib` targets |
 | `tests` | `cargo test --workspace`, in the sandbox |
 | `release.<package>` | the .crate of `cargo package --package <package>`; `release.<package>.crate` is its path |
-| `fetches` | every download, as entries of the [purifier library](https://github.com/nix-purifiers/purifier) |
+| `fetches` | every download: the entries of the lock in memory |
 | `vendor` | the vendored sources every build reads |
 
 Evaluation knows every attribute and path from the lockfiles, without
 building anything or importing generated Nix code. A plain Rust library
 (`rlib`) is only usable compiled into something, so it has a release and
 no package.
+
+### The lock in memory
+
+`lib.cargo-purifier.readLock { src, workspace ? ".", lockFile ? … }` reads
+both lockfiles into the shape every purifier shares: `purifier`,
+`entries`, `outputs` and `problems`. `entries` are download entries of the
+[purifier library](https://github.com/nix-purifiers/purifier): a file
+entry per registry crate, from the checksum in `Cargo.lock`, and a git
+entry per checkout. Each also carries `cargo = { source, name, version }`.
+Cargo downloads are the same on every system, so no entry has `systems`.
+`outputs` names every workspace package, with its binaries, library and
+version, and `problems` holds the reasons the lockfiles cannot be used.
+Reading never fails, except on a purifier lockfile that looks like a JSON
+object and does not parse, which Nix cannot catch; that error still names
+the file and the fix. The builder passes the lock to the library's
+`checkLock`, and builds the entries `entriesFor` gives for the host
+system.
 
 `fetchers.fetchurl` and `fetchers.fetchgit` replace nixpkgs' fetchers for
 every download, crates.io included, for a mirror or credentials.
@@ -101,10 +120,9 @@ of a path `src` the builds see, and `rustPlatform` is the Rust toolchain.
 ### A lockfile outside the source
 
 A packaging flake can build a workspace its author does not change.
-`lockFile` and `cargoLock` name the two lockfiles outside `src`, and a
-`cargoLock` given there replaces any copy in `src`. Every command takes
-`--lockfile <path>`, and the cargo wrapper reads the same path from
-`CARGO_PURIFIER_LOCKFILE`.
+`lockFile` names a purifier lockfile outside `src`; `Cargo.lock` stays in
+the workspace. Every command takes `--lockfile <path>`, and the cargo
+wrapper reads the same path from `CARGO_PURIFIER_LOCKFILE`.
 
 ### Publish
 
@@ -180,13 +198,12 @@ dependency code in about four seconds.
 | Another registry, git or sparse index | the URL its `dl` template gives, with all of cargo's markers, by the checksum in `Cargo.lock` |
 | git, over HTTPS or any URL Nix can fetch | `fetchgit` with submodules, by the hash in the purifier lockfile |
 | git over `ssh://` | the same repository over HTTPS from the same host, since the sandbox holds no SSH keys; a private repository needs a credentialed `fetchers.fetchgit` |
-| path inside the workspace | the build's `src` |
+| path | the build's `src` |
 
-A path dependency outside the workspace root is not part of `src`, so the
-sandbox cannot see it. Such a dependency builds when `src` is a directory
-that contains both, with `lockFile` and `cargoLock` naming the lockfiles in
-the workspace. The builds use the package set's Rust toolchain, and do not
-read `rust-toolchain.toml`.
+A path dependency outside the workspace root builds when `src` is a
+directory that holds both, and `workspace` names the workspace inside it,
+as in `{ src = ./.; workspace = "app"; }`. The builds use the package set's
+Rust toolchain, and do not read `rust-toolchain.toml`.
 
 ### What the purifier lockfile holds
 
@@ -223,16 +240,19 @@ Working through ripgrep made the wrapper name a dependency missing from
 
 CI runs the suite on x86_64-linux and aarch64-linux.
 
-- The contract's checks: `conformance-stale`, `-tampered`, `-missing`,
-  `-malformed`, `-offline` and `-external` in the flake, and
-  `conformance-relock` and `conformance-rebuild` as CI jobs.
+- The flake holds the contract's checks for stale, tampered, missing and
+  malformed lockfiles, for offline work after a prefetch, and for a
+  lockfile kept outside the source. CI runs the relock, update and rebuild
+  checks of the contract as jobs, because they need the network or a Nix
+  daemon. The `read-lock` check covers the shape of the lock in memory.
 - `refuses-*` checks give evaluation more lockfiles it must refuse, and
   check each message.
 - Unit tests in `tests/test_cargo_purifier.py` cover the lockfile checks,
   the parsing of `Cargo.lock` sources, `ssh://` URLs, cargo's configuration
   and credentials, and the publish request.
 - Each source kind has a fixture: `workspace` (crates.io, git with
-  submodules, path), `registry` and `ssh`.
+  submodules, path), `registry`, `ssh`, and `outside` (a path dependency
+  outside the workspace root).
 - `local-registry` runs the lock and the publish against a registry and a
   git repository it sets up itself, and relocks from scratch byte for byte.
 - `tests/negative.sh` covers downloads whose recorded hash is wrong.

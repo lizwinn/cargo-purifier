@@ -10,13 +10,13 @@
 #   rust-src  the standard library's sources, which rust-analyzer reads
 #
 #   nix-build tool-prefetch.nix --arg nixpkgs <path> --argstr system <system> \
-#     --arg lockFile <cargo-purifier.lock.json> --arg cargoLock <Cargo.lock> \
+#     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json> \
 #     --arg tools 'builtins.storePath "<the cargo-purifier package>"'
 {
   nixpkgs,
   system,
+  src,
   lockFile,
-  cargoLock,
   # The cargo-purifier package that runs the prefetch, or null when the
   # command runs outside it.
   tools,
@@ -27,8 +27,8 @@ let
     inherit
       nixpkgs
       system
+      src
       lockFile
-      cargoLock
       ;
   };
 in

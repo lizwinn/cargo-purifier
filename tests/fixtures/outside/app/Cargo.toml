@@ -1,0 +1,8 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# A path dependency outside the workspace root.
+shared = { path = "../shared" }

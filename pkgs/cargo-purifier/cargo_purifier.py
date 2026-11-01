@@ -325,6 +325,15 @@ def lock(options):
     print(f"cargo-purifier: wrote {lock_path}", file=sys.stderr)
 
 
+def update(options):
+    """`cargo update` of every package, or of the named ones, then the lock
+    of the result."""
+    root, root_manifest = workspace_root(options.manifest_path)
+    named = [argument for package in options.packages for argument in ("--package", package)]
+    run(["cargo", "update", "--manifest-path", root_manifest, *named], capture=False, cwd=root)
+    lock(options)
+
+
 def version_req(requirement):
     """A requirement as cargo sends it: a bare version means a caret
     requirement."""
@@ -461,8 +470,8 @@ def prefetch(options):
     print("cargo-purifier: building the vendored sources and the tools in the Nix store", file=sys.stderr)
     out = Path(nix_build(
         "tool-prefetch.nix",
+        "--arg", "src", path_arg(root),
         "--arg", "lockFile", path_arg(lock_path),
-        "--arg", "cargoLock", path_arg(root / "Cargo.lock"),
         "--arg", "tools", tools_arg(),
         "--out-link", str(state / "prefetch"),
     ))
@@ -481,7 +490,7 @@ def nix_release(root, lock_path, package):
     """The .crate file Nix packages for a workspace package."""
     out = nix_build(
         "tool-release.nix", "--no-out-link",
-        "--argstr", "root", str(root),
+        "--arg", "src", path_arg(root),
         "--arg", "lockFile", path_arg(lock_path),
         "--argstr", "package", package,
     )
@@ -564,10 +573,12 @@ def main(argv):
         args = args[1:]
     parser = argparse.ArgumentParser(prog="cargo-purifier", description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    locker = commands.add_parser("lock", help="write cargo-purifier.lock.json")
+    locker = commands.add_parser("lock", help="write cargo-purifier.lock.json, keeping cargo's resolution")
+    updater = commands.add_parser("update", help="`cargo update` every package or the named ones, then lock")
+    updater.add_argument("packages", nargs="*", help="the packages to update; all of them by default")
     fetcher = commands.add_parser("prefetch", help="build what the everyday loop and the editor need, for offline work")
     publisher = commands.add_parser("publish", help="upload the .crate Nix packages for a workspace package")
-    for command in (locker, fetcher, publisher):
+    for command in (locker, updater, fetcher, publisher):
         command.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
         command.add_argument("--lockfile", help="the purifier lockfile, when it lives outside the workspace")
     publisher.add_argument("-p", "--package", help="the workspace package to publish")
@@ -575,7 +586,7 @@ def main(argv):
     publisher.add_argument("--crate", help="a .crate file to upload instead of the one Nix packages")
     publisher.add_argument("--dry-run", action="store_true", help="print the publish metadata and upload nothing")
     options = parser.parse_args(args)
-    {"lock": lock, "prefetch": prefetch, "publish": publish}[options.command](options)
+    {"lock": lock, "update": update, "prefetch": prefetch, "publish": publish}[options.command](options)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ export PYTHONDONTWRITEBYTECODE=1
 tools=$(nix build --no-link --print-out-paths '.#cargo-purifier')
 
 "$tools/bin/cargo-purifier" lock --manifest-path tests/fixtures/workspace/Cargo.toml
+"$tools/bin/cargo-purifier" lock --manifest-path tests/fixtures/outside/app/Cargo.toml
+"$tools/bin/cargo-purifier" lock --manifest-path tests/fixtures/update/Cargo.toml
 
 python3 - tests/fixtures/registry/cargo-purifier.lock.json tests/fixtures/ssh/cargo-purifier.lock.json <<'EOF'
 import json, sys

@@ -1,0 +1,15 @@
+{
+  "cargoLock": "sha256-8KPDPCcTl4v8rpsgc6Xk+tFm0LotVDnLPeXcoStQeRY=",
+  "contentHash": "sha256-iTwhs7T+gZIkbqnQneK/PKX/TRxK+vEVpwOeyUBKN7o=",
+  "git": [],
+  "packages": {
+    "pinned": {
+      "bins": [
+        "pinned"
+      ],
+      "lib": null
+    }
+  },
+  "registries": {},
+  "version": 1
+}

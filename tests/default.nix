@@ -6,8 +6,9 @@
 # daemon, so they are CI jobs of those names (.github/workflows/check.yml).
 {
   pkgs,
-  # lib.cargo-purifier.buildCargoProject.
+  # lib.cargo-purifier.buildCargoProject and lib.cargo-purifier.readLock.
   buildCargoProject,
+  readLock,
   # The cargo-purifier package: the command, the cargo wrapper and
   # rust-analyzer.
   cargo-purifier,
@@ -44,21 +45,22 @@ let
   # `cargo-purifier lock` records it.
   ssh = build { src = ./fixtures/ssh; };
 
-  # The workspace fixture without either lockfile in its source, built from
-  # the lockfiles beside it.
+  # A workspace in fixtures/outside/app with a path dependency in
+  # fixtures/outside/shared, outside the workspace root.
+  outside = build {
+    src = ./fixtures/outside;
+    workspace = "app";
+  };
+
+  # The workspace fixture without the purifier lockfile in its source, built
+  # from the one beside it.
   external = build {
     src = builtins.path {
-      name = "workspace-without-lockfiles";
+      name = "workspace-without-purifier-lockfile";
       path = ./fixtures/workspace;
-      filter =
-        path: _:
-        !(lib.elem (baseNameOf path) [
-          "cargo-purifier.lock.json"
-          "Cargo.lock"
-        ]);
+      filter = path: _: baseNameOf path != "cargo-purifier.lock.json";
     };
     lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
-    cargoLock = ./fixtures/workspace/Cargo.lock;
   };
 
   workspaceLock = lib.importJSON ./fixtures/workspace/cargo-purifier.lock.json;
@@ -88,7 +90,7 @@ let
     name: lockFile: expected:
     refuses name {
       inherit lockFile expected;
-      cargoLock = ./fixtures/workspace/Cargo.lock;
+      src = ./fixtures/workspace;
     };
 
   pass = name: pkgs.runCommand name { } "touch $out";
@@ -103,9 +105,11 @@ realWorld
 // {
   # The purifier contract.
 
+  # The workspace lockfile beside a Cargo.lock it was not made from
+  # (fixtures/stale holds only that Cargo.lock).
   conformance-stale = refuses "conformance-stale" {
+    src = ./fixtures/stale;
     lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
-    cargoLock = ./fixtures/stale/Cargo.lock;
     expected = "was made from a different Cargo.lock. Run `cargo-purifier lock`";
   };
 
@@ -125,6 +129,14 @@ realWorld
   conformance-malformed =
     workspaceRefuses "conformance-malformed"
       (builtins.toFile "cargo-purifier.lock.json" ''{ "version": 1, '')
+      "is not valid JSON. Run `cargo-purifier lock` to write it again";
+
+  # A file that looks like a JSON object but does not parse fails reading
+  # itself, which Nix cannot turn into a problem; its error still names the
+  # file and the fix.
+  refuses-unparsable =
+    workspaceRefuses "refuses-unparsable"
+      (builtins.toFile "cargo-purifier.lock.json" ''{ "version": 1, }'')
       "run `cargo-purifier lock` to write it again";
 
   conformance-offline = import ./conformance-offline.nix {
@@ -132,8 +144,8 @@ realWorld
     prefetched = import ../nix/lib/tool-prefetch.nix {
       nixpkgs = pkgs.path;
       inherit system;
+      src = ./fixtures/workspace;
       lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
-      cargoLock = ./fixtures/workspace/Cargo.lock;
       tools = cargo-purifier;
     };
   };
@@ -160,7 +172,7 @@ realWorld
     lockFile = lockText (
       rehashed (lib.importJSON ./fixtures/registry/cargo-purifier.lock.json // { registries = { }; })
     );
-    cargoLock = ./fixtures/registry/Cargo.lock;
+    src = ./fixtures/registry;
     expected = "has no entry for the registry sparse+https://registry.invalid/index/. Run `cargo-purifier lock`";
   };
 
@@ -182,6 +194,13 @@ realWorld
   # counter runs, with itoa from the fixture's own registry.
   registry = pkgs.runCommand "registry" { } ''
     test "$(${lib.getExe registry.packages.counter})" = "counted 42"
+    touch $out
+  '';
+
+  # app runs, with a path dependency outside its workspace, from a source
+  # tree that holds both.
+  outside = pkgs.runCommand "outside" { } ''
+    test "$(${lib.getExe outside.packages.app})" = "shared from outside the workspace"
     touch $out
   '';
 
@@ -280,11 +299,35 @@ realWorld
     assert lib.length fetches == 2;
     pass "fetches";
 
+  # The lock in memory of the workspace fixture has the contract's shape:
+  # the crates.io crate and the git checkout as entries, every package as an
+  # output, and no problems.
+  read-lock =
+    let
+      lock = readLock { src = ./fixtures/workspace; };
+    in
+    assert lock.purifier == "cargo-purifier";
+    assert lock.problems == [ ];
+    assert
+      lib.attrNames lock.outputs == [
+        "ffi"
+        "greet"
+        "hello"
+      ];
+    assert lock.outputs.hello.bins == [ "hello" ] && lock.outputs.hello.version == "0.2.0";
+    assert
+      map (entry: entry.cargo.name) lock.entries == [
+        "itoa"
+        "ryu"
+      ];
+    assert lib.all (entry: !(entry ? systems)) lock.entries;
+    pass "read-lock";
+
   # The release that `cargo-purifier publish` has Nix build.
   publish-release = import ../nix/lib/tool-release.nix {
     nixpkgs = pkgs.path;
     inherit system;
-    root = toString ./fixtures/workspace;
+    src = ./fixtures/workspace;
     lockFile = ./fixtures/workspace/cargo-purifier.lock.json;
     package = "greet";
   };

@@ -1,0 +1,9 @@
+[package]
+name = "pinned"
+version = "0.1.0"
+edition = "2021"
+
+# Cargo.lock pins itoa at 1.0.0, which `cargo-purifier update` moves to the
+# newest 1.x (the conformance-update job in CI).
+[dependencies]
+itoa = "1"

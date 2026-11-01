@@ -1,0 +1,15 @@
+{
+  "cargoLock": "sha256-egNaYIp2nw5GwDUd8/pmssk0BXf8q3llqXnS9F7hL64=",
+  "contentHash": "sha256-tH+mytPildL2chNVKiH08538BTQw0+DHrWdCZIPG0PY=",
+  "git": [],
+  "packages": {
+    "app": {
+      "bins": [
+        "app"
+      ],
+      "lib": null
+    }
+  },
+  "registries": {},
+  "version": 1
+}

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
 #
-# refuses <name> { lockFile, cargoLock, expected }: a check that evaluation
-# of the two lockfiles fails, with an error that contains `expected`. The
-# check runs nix-instantiate in the sandbox, on a dummy store, because a
-# parse error is one that builtins.tryEval cannot observe, and because the
-# message is what a developer reads.
+# refuses <name> { src, lockFile, expected }: a check that the lock in memory
+# of a workspace has a problem that contains `expected`, or that reading it
+# fails with that message. The check runs nix-instantiate in the sandbox, on
+# a dummy store, because a parse error is one that builtins.tryEval cannot
+# observe, and because the message is what a developer reads.
 { pkgs }:
 name:
 {
+  # The workspace root, which holds its Cargo.lock.
+  src,
   lockFile,
-  cargoLock,
   expected,
 }:
 pkgs.runCommand name { nativeBuildInputs = [ pkgs.nix ]; } ''
@@ -17,20 +18,14 @@ pkgs.runCommand name { nativeBuildInputs = [ pkgs.nix ]; } ''
   expression='
     let
       lib = import ${pkgs.path}/lib;
-      lock = import ${../nix/lib/lock.nix} {
-        inherit lib;
+      lock = import ${../nix/lib}/read-lock.nix { inherit lib; } {
+        src = ${src};
         lockFile = ${lockFile};
-        cargoLock = ${cargoLock};
       };
     in
-    builtins.deepSeq [
-      lock.packages
-      lock.outputHashes
-      lock.gitEntries
-      (map (package: lock.registryOf package.source) lock.registryPackages)
-    ] true'
+    if lock.problems == [ ] then true else throw (lib.concatStringsSep "\n" lock.problems)'
   if nix-instantiate --eval --strict --readonly-mode --store dummy:// --expr "$expression" 2>stderr; then
-    echo "${name}: evaluation accepted the lockfile" >&2
+    echo "${name}: the lock has no problem" >&2
     exit 1
   fi
   if ! grep -qF -- ${pkgs.lib.escapeShellArg expected} stderr; then

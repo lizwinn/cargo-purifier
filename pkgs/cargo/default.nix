@@ -99,8 +99,8 @@ writeShellApplication {
     elif vendor=$(nix-build ${../../nix/lib}/tool-vendor.nix \
       --arg nixpkgs ${path} \
       --argstr system ${stdenv.hostPlatform.system} \
+      --arg src "/. + \"$root\"" \
       --arg lockFile "/. + \"$lock\"" \
-      --arg cargoLock "/. + \"$root/Cargo.lock\"" \
       --out-link "$state/vendor" 2>"$state/nix-build.log"); then
       printf '%s\n' "$stamp" >"$state/stamp"
     else

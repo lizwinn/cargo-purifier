@@ -4,20 +4,25 @@
 # workspace package, from the nixpkgs the command was built with.
 #
 #   nix-build tool-release.nix --arg nixpkgs <path> --argstr system <system> \
-#     --argstr root <workspace root> --arg lockFile <cargo-purifier.lock.json> \
+#     --arg src <workspace root> --arg lockFile <cargo-purifier.lock.json> \
 #     --argstr package <package>
 {
   nixpkgs,
   system,
-  root,
+  src,
   lockFile,
   package,
 }:
 let
   pkgs = import nixpkgs { inherit system; };
-  project = import ./build-cargo-project.nix {
-    inherit pkgs lockFile;
-    src = /. + root;
+  lock = import ./tool-lock.nix {
+    inherit (pkgs) lib;
+    inherit src lockFile;
+  };
+  project = import ./project.nix {
+    inherit pkgs lock;
+    inherit src;
+    inherit (lock) entries;
   };
 in
 project.release.${package}
