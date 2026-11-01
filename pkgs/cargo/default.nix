@@ -14,7 +14,6 @@
   lib,
   path,
   stdenv,
-  writeText,
   writeShellApplication,
   coreutils,
   gnused,
@@ -26,16 +25,6 @@
 }:
 let
   inherit (pkgs) cargo rustc;
-
-  # What the wrapper builds: the vendored sources of a workspace, from the
-  # package set this wrapper was built with.
-  vendorExpr = writeText "cargo-purifier-vendor.nix" ''
-    { lockFile, cargoLock }:
-    let
-      pkgs = import ${path} { system = "${stdenv.hostPlatform.system}"; };
-    in
-    pkgs.callPackage ${../../nix/lib}/vendor.nix { inherit lockFile cargoLock; }
-  '';
 in
 writeShellApplication {
   name = "cargo";
@@ -93,7 +82,9 @@ writeShellApplication {
     stamp=$(cat "$lock" "$root/Cargo.lock" | sha256sum)
     if [ -e "$state/vendor" ] && [ "$(cat "$state/stamp" 2>/dev/null)" = "$stamp" ]; then
       vendor=$(readlink -f "$state/vendor")
-    elif vendor=$(nix-build ${vendorExpr} \
+    elif vendor=$(nix-build ${../../nix/lib}/tool-vendor.nix \
+      --arg nixpkgs ${path} \
+      --argstr system ${stdenv.hostPlatform.system} \
       --arg lockFile "/. + \"$lock\"" \
       --arg cargoLock "/. + \"$root/Cargo.lock\"" \
       --out-link "$state/vendor" 2>"$state/nix-build.log"); then

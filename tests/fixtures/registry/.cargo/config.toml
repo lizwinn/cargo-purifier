@@ -1,0 +1,5 @@
+# The registry exists only in this fixture's lockfiles: the Nix build reads
+# its crates from the download URLs the purifier lockfile records, and never
+# its index.
+[registries.mirror]
+index = "sparse+https://registry.invalid/index/"

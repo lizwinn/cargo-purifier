@@ -1,0 +1,8 @@
+[package]
+name = "counter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# A crate from a registry other than crates.io.
+itoa = { version = "1", registry = "mirror" }

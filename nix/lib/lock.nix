@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 #
 # Reads a cargo-purifier lockfile together with the Cargo.lock it was made
-# from. Cargo.lock pins every crates.io download by name, version and
-# checksum; the purifier lockfile adds the hash of each git checkout and the
+# from. Cargo.lock pins every registry download by name, version and
+# checksum; the purifier lockfile adds the hash of each git checkout, the
+# download URL template of each registry other than crates.io, and the
 # workspace's packages.
 #
 # Evaluation fails when the Cargo.lock beside the purifier lockfile is not
-# the one `cargo purify` read, because the git hashes and the package list
-# may no longer match it.
+# the one `cargo purify` read, because the git hashes, the registries and
+# the package list may no longer match it.
 {
   lib,
   # cargo-purifier.lock.json.
@@ -41,7 +42,14 @@ let
 
   hashByRev = lib.listToAttrs (map (entry: lib.nameValuePair entry.git.rev entry.hash) checked.git);
 
-  gitPackages = lib.filter (package: lib.hasPrefix "git+" (package.source or "")) parsed.package;
+  sourced = lib.filter (package: package ? source) parsed.package;
+
+  gitPackages = lib.filter (package: lib.hasPrefix "git+" package.source) sourced;
+
+  # crates.io, which nixpkgs importCargoLock fetches from its CDN.
+  cratesIo = "registry+https://github.com/rust-lang/crates.io-index";
+
+  isRegistry = source: lib.hasPrefix "registry+" source || lib.hasPrefix "sparse+" source;
 
   # The workspace's own packages, and its path dependencies, have no source.
   localPackages = lib.filter (package: !(package ? source)) parsed.package;
@@ -50,6 +58,9 @@ in
   # The workspace's packages, by name: their manifest, binaries and whether
   # they have a library.
   inherit (checked) packages;
+
+  # The `version` field of Cargo.lock, which lockfiles before format 3 lack.
+  cargoLockVersion = parsed.version or null;
 
   # The hashes of the git dependencies, in the form nixpkgs importCargoLock
   # takes them.
@@ -62,6 +73,43 @@ in
       )
     ) gitPackages
   );
+
+  # The commit a git package's source names.
+  inherit revOf;
+
+  # The URL a git checkout is fetched from: the URL in Cargo.lock, or its
+  # HTTPS form for an ssh:// dependency.
+  gitUrlOf =
+    rev:
+    (lib.findFirst (entry: entry.git.rev == rev)
+      (throw "cargo-purifier: ${toString lockFile} has no entry for the git commit ${rev}. Run `cargo purify`.")
+      checked.git
+    ).git.url;
+
+  # The packages from crates.io and from git, which importCargoLock vendors.
+  importedPackages = lib.filter (
+    package: package.source == cratesIo || !(isRegistry package.source)
+  ) sourced;
+
+  # The packages from every other registry, which the purifier vendors.
+  registryPackages = lib.filter (
+    package: isRegistry package.source && package.source != cratesIo
+  ) sourced;
+
+  # The checksum Cargo.lock records for a registry package: in the package
+  # entry, or in the `metadata` table of a format 1 lockfile.
+  checksumOf =
+    package:
+    package.checksum
+      or parsed.metadata."checksum ${package.name} ${package.version} (${package.source})"
+        or (throw "cargo-purifier: Cargo.lock has no checksum for ${package.name} ${package.version}.");
+
+  # The index configuration of a registry other than crates.io, by its
+  # source in Cargo.lock.
+  registryOf =
+    source:
+    (checked.registries or { }).${source}
+      or (throw "cargo-purifier: ${toString lockFile} has no entry for the registry ${source}. Run `cargo purify`.");
 
   # The version of a workspace package, which Cargo.lock records.
   versionOf =

@@ -6,13 +6,25 @@
 # own.
 #
 #   (buildCargoProject { src = ./.; }).packages.<package>
+#   (buildCargoProject { src = ./.; }).crates.<package>
 #
 # Every workspace package with at least one binary has a package here,
-# built with `cargo build --package <package>`. All of them share one
-# derivation of vendored sources.
+# built with `cargo build --package <package>`. Every workspace package has
+# a crate: the .crate file that `cargo package --package <package>` makes,
+# which `cargo purify publish` uploads. All of them share one derivation of
+# vendored sources.
+#
+# `buildCargoProject.override` replaces what the builder takes from the
+# package set: `rustPlatform` for another Rust toolchain, `fetchurl` for
+# registry downloads that need credentials or a mirror, and `fetchgit` for
+# private git repositories.
 {
   lib,
+  stdenv,
   rustPlatform,
+  fetchurl,
+  fetchgit,
+  runCommand,
 }:
 {
   # The workspace root: the directory of the workspace's Cargo.toml.
@@ -40,6 +52,9 @@ let
     inherit
       lib
       rustPlatform
+      fetchurl
+      fetchgit
+      runCommand
       lockFile
       cargoLock
       ;
@@ -74,10 +89,41 @@ let
         mainProgram = lib.head info.bins;
       };
     };
+
+  mkCrate =
+    name: _:
+    let
+      version = lock.versionOf name;
+    in
+    stdenv.mkDerivation {
+      pname = "${name}-crate";
+      inherit version;
+      src = filteredSrc;
+      cargoDeps = vendor;
+      nativeBuildInputs = [
+        rustPlatform.cargoSetupHook
+        rustPlatform.rust.cargo
+        rustPlatform.rust.rustc
+      ];
+      # `cargo package` also builds the packaged crate, from its own
+      # sources and the vendored ones.
+      buildPhase = ''
+        runHook preBuild
+        cargo package --frozen --package ${lib.escapeShellArg name}
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        install -Dm644 target/package/${name}-${version}.crate $out/${name}-${version}.crate
+        runHook postInstall
+      '';
+    };
 in
 {
   packages = lib.mapAttrs mkPackage (lib.filterAttrs (_: info: info.bins != [ ]) lock.packages);
 
-  # The vendored sources, which every package's build reads.
+  crates = lib.mapAttrs mkCrate lock.packages;
+
+  # The vendored sources, which every build reads.
   inherit vendor;
 }

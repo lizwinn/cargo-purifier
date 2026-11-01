@@ -1,0 +1,25 @@
+{
+  "cargoLock": "sha256-Yl2SwzrDxG0BW7S6PPhDNZmZ3BajxvawRYch99l+QKM=",
+  "git": [
+    {
+      "git": {
+        "rev": "12746aa88cc51a6f1fc97f92b8d36d991c2d966e",
+        "submodules": true,
+        "url": "https://github.com/dtolnay/ryu"
+      },
+      "hash": "sha256-3sLJLjnNzF0WaWXzI8Re4m3JiZ+W3h4p8TKRsETIUTU=",
+      "path": "git/12746aa88cc51a6f1fc97f92b8d36d991c2d966e"
+    }
+  ],
+  "packages": {
+    "tell": {
+      "bins": [
+        "tell"
+      ],
+      "lib": false,
+      "manifest": "Cargo.toml"
+    }
+  },
+  "registries": {},
+  "version": 1
+}

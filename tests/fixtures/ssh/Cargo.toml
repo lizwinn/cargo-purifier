@@ -1,0 +1,8 @@
+[package]
+name = "tell"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# A git dependency over SSH, which the sandbox fetches over HTTPS.
+ryu = { git = "ssh://git@github.com/dtolnay/ryu", tag = "1.0.18" }

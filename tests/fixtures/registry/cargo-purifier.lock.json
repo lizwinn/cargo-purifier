@@ -1,0 +1,19 @@
+{
+  "cargoLock": "sha256-ZxzAh/MqhTr0tWTeg6rJRXkTLhD8w+0qKwUTmn3DoRU=",
+  "git": [],
+  "packages": {
+    "counter": {
+      "bins": [
+        "counter"
+      ],
+      "lib": false,
+      "manifest": "Cargo.toml"
+    }
+  },
+  "registries": {
+    "sparse+https://registry.invalid/index/": {
+      "dl": "https://static.crates.io/crates/{crate}/{crate}-{version}.crate"
+    }
+  },
+  "version": 1
+}
