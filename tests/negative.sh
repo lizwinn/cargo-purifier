@@ -10,6 +10,8 @@
 #
 # Run it from the repository root: tests/negative.sh
 set -euo pipefail
+# The checkout stays as it was, without Python bytecode.
+export PYTHONDONTWRITEBYTECODE=1
 
 repo=$PWD
 work=$(mktemp -d)

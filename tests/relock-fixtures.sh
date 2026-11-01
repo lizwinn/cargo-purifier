@@ -11,6 +11,8 @@
 #
 # Run it from the repository root: tests/relock-fixtures.sh
 set -euo pipefail
+# The checkout stays as it was, without Python bytecode.
+export PYTHONDONTWRITEBYTECODE=1
 
 tools=$(nix build --no-link --print-out-paths '.#cargo-purifier')
 
