@@ -1,0 +1,9 @@
+[package]
+name = "ffi"
+version = "0.3.0"
+edition = "2021"
+
+# A library that cargo writes as files to install: a shared and a static
+# library for C callers.
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]

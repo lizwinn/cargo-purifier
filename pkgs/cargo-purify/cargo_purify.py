@@ -210,10 +210,16 @@ def lock(options):
         if package["id"] not in members:
             continue
         targets = package["targets"]
+        libs = [t for t in targets if LIB_KINDS & set(t["kind"])]
         packages[package["name"]] = {
             "manifest": Path(package["manifest_path"]).relative_to(root).as_posix(),
             "bins": sorted(t["name"] for t in targets if "bin" in t["kind"]),
-            "lib": any(kind in LIB_KINDS for t in targets for kind in t["kind"]),
+            # The library target, whose name the files cargo writes for it
+            # carry, with '-' as '_'.
+            "lib": {
+                "name": libs[0]["name"].replace("-", "_"),
+                "kinds": sorted(libs[0]["crate_types"]),
+            } if libs else None,
         }
 
     cargo_lock_bytes = (root / "Cargo.lock").read_bytes()

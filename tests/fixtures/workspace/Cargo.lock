@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "ffi"
+version = "0.3.0"
+
+[[package]]
 name = "greet"
 version = "0.1.0"
 dependencies = [

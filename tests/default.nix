@@ -138,16 +138,55 @@ in
 
   # greet packaged as a .crate, which `cargo package` also builds.
   crate = pkgs.runCommand "crate" { } ''
-    tar tzf ${workspace.crates.greet}/greet-0.1.0.crate | grep -qx 'greet-0.1.0/src/lib.rs'
+    tar tzf ${workspace.crates.greet.crate} | grep -qx 'greet-0.1.0/src/lib.rs'
     touch $out
   '';
 
-  # Only workspace packages with a binary have a package.
+  # The workspace packages with a binary, or with a library cargo writes as
+  # a file to install, have a package; greet has neither.
   packages =
-    if lib.attrNames workspace.packages == [ "hello" ] then
+    if
+      lib.attrNames workspace.packages == [
+        "ffi"
+        "hello"
+      ]
+    then
       pass "packages"
     else
       throw "packages: ${toString (lib.attrNames workspace.packages)}";
+
+  # Every output the lockfile names, at the path evaluation gives it. hello
+  # has a crate attribute too, but `cargo package` refuses its git
+  # dependency, which has no version.
+  outputs =
+    let
+      inherit (workspace.packages) ffi hello;
+      named = {
+        "hello.bins.hello" = hello.bins.hello;
+        "ffi.libs.libffi.so" = ffi.libs."libffi${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+        "ffi.libs.libffi.a" = ffi.libs."libffi.a";
+        "crates.ffi.crate" = workspace.crates.ffi.crate;
+        "crates.greet.crate" = workspace.crates.greet.crate;
+      };
+    in
+    assert lib.attrNames hello.bins == [ "hello" ];
+    assert lib.attrNames ffi.bins == [ ];
+    assert lib.length (lib.attrNames ffi.libs) == 2;
+    assert
+      lib.attrNames workspace.crates == [
+        "ffi"
+        "greet"
+        "hello"
+      ];
+    pkgs.runCommand "outputs" { } ''
+      ${lib.concatStrings (
+        lib.mapAttrsToList (name: file: ''
+          test -f ${file} || { echo "${name} is missing: ${file}" >&2; exit 1; }
+        '') named
+      )}
+      test -x ${hello.bins.hello}
+      touch $out
+    '';
 
   # A Cargo.lock that changed since `cargo purify` fails evaluation.
   stale-lock =

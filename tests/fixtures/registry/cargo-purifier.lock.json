@@ -6,7 +6,7 @@
       "bins": [
         "counter"
       ],
-      "lib": false,
+      "lib": null,
       "manifest": "Cargo.toml"
     }
   },

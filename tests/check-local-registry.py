@@ -18,7 +18,7 @@ assert lock["registries"] == {source: {"dl": dl}}, lock["registries"]
 [git] = lock["git"]
 assert git["git"]["url"] == git_url and git["git"]["submodules"] is True, git
 assert git["hash"].startswith("sha256-") and git["path"] == "git/" + git["git"]["rev"], git
-assert lock["packages"]["app"] == {"bins": ["app"], "lib": False, "manifest": "Cargo.toml"}, lock["packages"]
+assert lock["packages"]["app"] == {"bins": ["app"], "lib": None, "manifest": "Cargo.toml"}, lock["packages"]
 
 body = Path(upload).read_bytes()
 length = int.from_bytes(body[:4], "little")

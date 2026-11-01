@@ -16,7 +16,7 @@
       "bins": [
         "tell"
       ],
-      "lib": false,
+      "lib": null,
       "manifest": "Cargo.toml"
     }
   },

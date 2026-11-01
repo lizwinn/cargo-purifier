@@ -1,5 +1,5 @@
 {
-  "cargoLock": "sha256-a4Ava6bRti+f9KagW38b7juewctBFULRGiYX5qQ6FM4=",
+  "cargoLock": "sha256-7jlTC14q8I5N+4Xm/pF9r1tGuNXaS7gysftsnjmsluk=",
   "git": [
     {
       "git": {
@@ -12,16 +12,33 @@
     }
   ],
   "packages": {
+    "ffi": {
+      "bins": [],
+      "lib": {
+        "kinds": [
+          "cdylib",
+          "rlib",
+          "staticlib"
+        ],
+        "name": "ffi"
+      },
+      "manifest": "ffi/Cargo.toml"
+    },
     "greet": {
       "bins": [],
-      "lib": true,
+      "lib": {
+        "kinds": [
+          "lib"
+        ],
+        "name": "greet"
+      },
       "manifest": "greet/Cargo.toml"
     },
     "hello": {
       "bins": [
         "hello"
       ],
-      "lib": false,
+      "lib": null,
       "manifest": "hello/Cargo.toml"
     }
   },

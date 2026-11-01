@@ -13,7 +13,8 @@ workspace's packages with their binaries.
 
 - **Sandboxed builds.** `buildCargoProject`, which the flake's overlay adds
   to a package set, gives a package for every workspace package that has a
-  binary, and a .crate file for every workspace package.
+  binary or an installable library, and a .crate file for every workspace
+  package. Evaluation knows every output by name from the lockfile.
 - **Interactive cargo on the locked sources.** With the lockfiles present,
   the wrapper's `cargo build`, `run`, `test` and the like read the
   dependencies' sources from a vendored copy that Nix builds from the two
@@ -80,6 +81,26 @@ Each package runs `cargo build --package <package>`. Each crate,
 `cargo package --package <package>`, which also builds the packaged crate.
 All of them read one derivation of vendored sources,
 `(buildCargoProject { … }).vendor`.
+
+## Outputs
+
+The lockfile names each workspace package with its binaries and its
+library target, so evaluation knows every output and its path without
+building anything or importing generated Nix code:
+
+| Attribute | Output |
+|---|---|
+| `packages.<package>.bins.<binary>` | `$out/bin/<binary>` |
+| `packages.<package>.libs."lib<name>.so"` | the shared library of a `cdylib` or `dylib` target |
+| `packages.<package>.libs."lib<name>.a"` | the static library of a `staticlib` target |
+| `crates.<package>.crate` | `$out/<package>-<version>.crate` |
+
+A workspace package has a `packages` entry when it has a binary or one of
+those library kinds. A plain Rust library (`rlib`) is only usable compiled
+into something, so it has a crate and no package. The outputs come from
+the lock run's `cargo metadata`, because `Cargo.toml` alone does not name
+them: cargo finds binaries in `src/main.rs` and `src/bin/` without any
+manifest entry, and workspace members may be globs.
 
 `nix/lib/build-cargo-project.nix` documents the arguments: `doCheck` runs
 `cargo test --package <package>`, `srcFilter` chooses the files of a path
@@ -152,7 +173,8 @@ the workspace.
     }
   ],
   "packages": {
-    "hello": { "bins": ["hello"], "lib": false, "manifest": "hello/Cargo.toml" }
+    "ffi": { "bins": [], "lib": { "kinds": ["cdylib", "staticlib"], "name": "ffi" }, "manifest": "ffi/Cargo.toml" },
+    "hello": { "bins": ["hello"], "lib": null, "manifest": "hello/Cargo.toml" }
   },
   "registries": {
     "sparse+https://registry.example/index/": { "dl": "https://dl.example/{prefix}/{crate}-{version}.crate" }
@@ -167,13 +189,15 @@ fetched from, and the NAR hash that nixpkgs `fetchgit` computes for it. One
 checkout can provide several crates, and the vendoring step finds each
 crate in it by name. `registries` maps each registry source in `Cargo.lock`
 to the `dl` template of its index configuration. `packages` lists the
-workspace's packages. The file records no versions, so a version bump
-changes only `Cargo.lock`, which then needs `cargo purify` again.
+workspace's packages with their binaries, and with the name and crate
+types of their library target. The file records no versions, so a version
+bump changes only `Cargo.lock`, which then needs `cargo purify` again.
 
 ## Decisions
 
-- Only packages with a binary become Nix packages, because a Rust library
-  is only usable compiled into something. Every package has a crate.
+- Only packages with a binary or an installable library become Nix
+  packages, because a plain Rust library is only usable compiled into
+  something. Every package has a crate.
 - Each package builds with its own `cargo build --package`, so a package's
   build does not depend on its siblings. They share the vendored sources,
   not compiled crates.

@@ -8,11 +8,19 @@
 #   (buildCargoProject { src = ./.; }).packages.<package>
 #   (buildCargoProject { src = ./.; }).crates.<package>
 #
-# Every workspace package with at least one binary has a package here,
+# Every workspace package that has a binary, or a library cargo writes as a
+# file to install (a cdylib, a staticlib or a dylib), has a package here,
 # built with `cargo build --package <package>`. Every workspace package has
 # a crate: the .crate file that `cargo package --package <package>` makes,
 # which `cargo purify publish` uploads. All of them share one derivation of
 # vendored sources.
+#
+# The lockfile names every output, so evaluation knows each one's path
+# without building anything:
+#
+#   packages.<package>.bins.<binary>         $out/bin/<binary>
+#   packages.<package>.libs."<file>"         $out/lib/lib<name>.so or .a
+#   crates.<package>.crate                   $out/<package>-<version>.crate
 #
 # `buildCargoProject.override` replaces what the builder takes from the
 # package set: `rustPlatform` for another Rust toolchain, `fetchurl` for
@@ -69,7 +77,31 @@ let
     else
       src;
 
+  # The files cargo writes for a library target and nixpkgs' install hook
+  # copies to $out/lib.
+  libFiles =
+    info:
+    let
+      kinds = if info.lib == null then [ ] else info.lib.kinds;
+      shared = stdenv.hostPlatform.extensions.sharedLibrary;
+    in
+    lib.optional (lib.elem "cdylib" kinds || lib.elem "dylib" kinds) "lib${info.lib.name}${shared}"
+    ++ lib.optional (lib.elem "staticlib" kinds) "lib${info.lib.name}.a";
+
+  hasOutputs = info: info.bins != [ ] || libFiles info != [ ];
+
   mkPackage =
+    name: info:
+    let
+      drv = buildPackage name info;
+    in
+    drv
+    // {
+      bins = lib.genAttrs info.bins (bin: "${drv}/bin/${bin}");
+      libs = lib.genAttrs (libFiles info) (file: "${drv}/lib/${file}");
+    };
+
+  buildPackage =
     name: info:
     rustPlatform.buildRustPackage {
       pname = name;
@@ -94,7 +126,12 @@ let
     name: _:
     let
       version = lock.versionOf name;
+      drv = buildCrate name version;
     in
+    drv // { crate = "${drv}/${name}-${version}.crate"; };
+
+  buildCrate =
+    name: version:
     stdenv.mkDerivation {
       pname = "${name}-crate";
       inherit version;
@@ -120,7 +157,7 @@ let
     };
 in
 {
-  packages = lib.mapAttrs mkPackage (lib.filterAttrs (_: info: info.bins != [ ]) lock.packages);
+  packages = lib.mapAttrs mkPackage (lib.filterAttrs (_: hasOutputs) lock.packages);
 
   crates = lib.mapAttrs mkCrate lock.packages;
 
