@@ -173,7 +173,8 @@ live in the repository of the workspace or in another one:
 
 ```nix
 {
-  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
+  inputs.cargo-purifier.url =
+    "github:nix-purifiers/cargo-purifier";
   inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
 
   outputs =
@@ -184,7 +185,9 @@ live in the repository of the workspace or in another one:
         inherit system;
         overlays = [ cargo-purifier.overlays.default ];
       };
-      project = pkgs.cargo-purifier.buildCargoProject { src = ./.; };
+      project = pkgs.cargo-purifier.buildCargoProject {
+        src = ./.;
+      };
     in
     {
       packages.${system}.hello = project.packages.hello;
@@ -347,7 +350,8 @@ cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml \
 
 ```nix
 {
-  inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
+  inputs.cargo-purifier.url =
+    "github:nix-purifiers/cargo-purifier";
   inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
   inputs.ripgrep = {
     url = "github:BurntSushi/ripgrep/14.1.1";
@@ -373,7 +377,8 @@ cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml \
       };
     in
     {
-      packages.${system}.ripgrep = project.packages.ripgrep;
+      packages.${system}.ripgrep =
+        project.packages.ripgrep;
     };
 }
 ```
