@@ -15,7 +15,9 @@ reuses it, and writes `cargo-purifier.lock.json` beside it only for what
 Install the integration into your Nix profile once:
 
 ```sh
-nix profile install 'github:nix-purifiers/cargo-purifier#cargo' 'github:nix-purifiers/cargo-purifier#cargo-purifier'
+nix profile install \
+  'github:nix-purifiers/cargo-purifier#cargo' \
+  'github:nix-purifiers/cargo-purifier#cargo-purifier'
 ```
 
 This installs the `cargo` wrapper. Use it for the locked
@@ -33,7 +35,8 @@ The setup prepares the locked dependencies and the integration that
 Cargo's normal commands use:
 
 ```zsh
-nix shell 'github:nix-purifiers/cargo-purifier#cargo' github:nix-purifiers/cargo-purifier
+nix shell 'github:nix-purifiers/cargo-purifier#cargo' \
+  github:nix-purifiers/cargo-purifier
 cargo-purifier lock
 cargo-purifier prefetch
 cargo build
@@ -185,7 +188,8 @@ live in the repository of the workspace or in another one:
   inputs.cargo-purifier.url = "github:nix-purifiers/cargo-purifier";
   inputs.nixpkgs.follows = "cargo-purifier/nixpkgs";
 
-  outputs = { nixpkgs, cargo-purifier, ... }:
+  outputs =
+    { nixpkgs, cargo-purifier, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -215,15 +219,15 @@ For an ad hoc build, the builder can also be evaluated directly from the
 project root. Replace the example package name with one from your project:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.hello'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.cargo-purifier.buildCargoProject { src = ./.; })
+.packages.hello'
 ```
 
 This uses the purifier's pinned nixpkgs, matching the lock command above.
@@ -324,15 +328,15 @@ there:
 git clone https://github.com/BurntSushi/ripgrep
 cd ripgrep
 nix run github:nix-purifiers/cargo-purifier -- lock
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.cargo-purifier.buildCargoProject { src = ./.; }).packages.ripgrep'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.cargo-purifier.buildCargoProject { src = ./.; })
+.packages.ripgrep'
 ```
 
 `nix build` leaves `rg` at `result/bin/rg`. For the development loop,
@@ -346,7 +350,8 @@ Keep the purifier lockfile in the packaging flake, and write it from a
 checkout of the release you package:
 
 ```zsh
-cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml --lockfile ./ripgrep.lock.json
+cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml \
+  --lockfile ./ripgrep.lock.json
 ```
 
 ```nix
@@ -358,7 +363,13 @@ cargo-purifier lock --manifest-path ~/src/ripgrep/Cargo.toml --lockfile ./ripgre
     flake = false;
   };
 
-  outputs = { nixpkgs, cargo-purifier, ripgrep, ... }:
+  outputs =
+    {
+      nixpkgs,
+      cargo-purifier,
+      ripgrep,
+      ...
+    }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
