@@ -386,18 +386,10 @@ files.
 
 ## Credits
 
-cargo-purifier follows the design of
-[sbt-purifier](https://github.com/nix-purifiers/sbt-purifier), formerly
-sbt-nix-backend: the build tool records what it downloads in a lockfile,
-and Nix builds from it with no generated Nix files.
-
 The purifier idea was inspired by nixcloud's
-[cargo (libnix)](https://github.com/nixcloud/cargo), a fork of cargo that
-builds every crate as its own Nix derivation. cargo-purifier runs stock
-cargo instead, with its own incremental compiler, and gives Nix the
-dependencies' sources, the release builds and the published crates.
+[cargo (libnix)](https://github.com/nixcloud/cargo).
 
 nixpkgs `rustPlatform.importCargoLock` vendors the crates.io and git
 dependencies. [crane](https://github.com/ipetkov/crane) and
-[naersk](https://github.com/nix-community/naersk) build cargo projects
-from `Cargo.lock` too.
+[naersk](https://github.com/nix-community/naersk) also build Cargo projects
+from `Cargo.lock`.
