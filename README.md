@@ -313,9 +313,12 @@ cargo-purifier, lock it once at the root of a checkout, and build it from
 there:
 
 ```zsh
+nix shell \
+  'github:nix-purifiers/cargo-purifier#cargo' \
+  'github:nix-purifiers/cargo-purifier#cargo-purifier'
 git clone https://github.com/BurntSushi/ripgrep
 cd ripgrep
-nix run github:nix-purifiers/cargo-purifier -- lock
+cargo-purifier lock
 nix build --impure --expr 'let
   purifier = builtins.getFlake "github:nix-purifiers/cargo-purifier";
   pkgs = import purifier.inputs.nixpkgs {
