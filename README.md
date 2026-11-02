@@ -5,14 +5,10 @@ Nix-resolved dependencies. Use the normal build and test commands in your
 working tree; building the project itself in the Nix sandbox is an
 optional next step.
 
-It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
-
 cargo keeps planning and compiling the build. `Cargo.lock` already pins
 every registry download by name, version and checksum, so cargo-purifier
 reuses it, and writes `cargo-purifier.lock.json` beside it only for what
-`Cargo.lock` cannot record. cargo-purifier is one of the
-[nix-purifiers](https://nix-purifiers.github.io) and meets the
-[purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
+`Cargo.lock` cannot record.
 
 ## Installation
 
