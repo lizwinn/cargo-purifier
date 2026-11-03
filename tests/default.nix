@@ -117,6 +117,29 @@ let
 in
 realWorld
 // {
+  composition-repository =
+    pkgs.runCommand "cargo-repository-native-tests"
+      {
+        nativeBuildInputs = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.stdenv.cc
+          pkgs.git
+        ];
+      }
+      ''
+        export HOME="$TMPDIR/home"
+        export CARGO_REPOSITORY_TEST_CARGO=${pkgs.cargo}/bin/cargo
+        export CARGO_PURIFIER_TEST_TOOLS=${../tools}
+        ${(pkgs.python3.withPackages (python: [ python.tomlkit ]))}/bin/python3 \
+          ${./test_cargo_repository.py}
+        touch "$out"
+      '';
+
+  composition-native-export = import ./native-cargo-export.nix {
+    inherit pkgs;
+    project = workspace;
+  };
   # The purifier contract.
 
   # The workspace lockfile beside a Cargo.lock it was not made from

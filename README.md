@@ -48,8 +48,8 @@ the wrapper's `cargo build`, `check`, `run`, `test`, `bench`, `doc`,
 `clippy`, `rustc`, `rustdoc`, `tree`, `metadata`, `package` and `fix` read
 every registry and git source from a vendored copy that Nix builds from
 the two lockfiles, and run with `--offline`. Incremental compilation works
-as usual. Every other command, such as `update`, `add` or `publish`, runs
-plain cargo.
+as usual. In projects with Nix inputs, `add`, `remove` and `update` also
+resolve against those inputs. Run `cargo-purifier lock` after changing dependencies.
 
 To add a dependency, run `cargo add`, then `cargo-purifier lock`. To
 upgrade, run `cargo-purifier update`, which runs `cargo update` for every
@@ -131,6 +131,25 @@ workspace's copy. cargo reads `Cargo.lock` only from the workspace root, so
 the cargo wrapper copies the outside `Cargo.lock` there before it runs
 cargo.
 
+### Dependencies from another Nix project
+
+```zsh
+cargo-purifier lock --input github:example/library
+cargo run
+```
+
+The input exports `projections.cargo` from a package built with
+`buildCargoProject`. Its Nix source pin covers the supplied crates; their
+download hashes stay out of both lockfiles. Existing dependency requirements
+are bound automatically, and the working manifest keeps its original versions.
+Use `--refresh-inputs` to advance source pins or `--no-inputs` to remove them.
+
+In a Nix build, pass producer packages with `dependencies = [ producer ];`.
+When the consumer lock already records the inputs, the builder loads those pins
+automatically. Each package and release exposes `projections.cargo`, a native
+local registry with the complete crate closure. Nix-derived versions and exact
+dependency requirements keep ordinary downstream resolution on that closure.
+
 ### Publish
 
 ```zsh
@@ -145,6 +164,14 @@ metadata read from the normalized `Cargo.toml` inside the crate. The token
 comes from where cargo keeps it: `CARGO_REGISTRY_TOKEN` or
 `CARGO_REGISTRIES_<NAME>_TOKEN`, or `credentials.toml` as `cargo login`
 writes it. `--dry-run` prints the metadata and uploads nothing.
+
+For a project with Nix inputs, publication includes the reachable projected
+dependencies. Existing coordinates are reused only when their checksums and
+downloaded bytes match. Ordinary Cargo projects can consume the resulting
+registry without the purifier. Cargo's `install --registry` path treats the
+installed root's unqualified manifest dependencies as crates.io dependencies;
+installing those binaries from an alternative registry requires a crates.io
+source replacement pointing at that registry.
 
 ### Decisions
 

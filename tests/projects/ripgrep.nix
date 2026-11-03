@@ -36,6 +36,30 @@ in
     touch $out
   '';
 
+  composition-real-project =
+    pkgs.runCommand "ripgrep-projected-native-consumer"
+      {
+        nativeBuildInputs = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.stdenv.cc
+          pkgs.jq
+        ];
+        passthru.repository = project.projections.cargo;
+      }
+      ''
+        export HOME="$TMPDIR/home" CARGO_HOME="$TMPDIR/cargo-home"
+        mkdir -p "$CARGO_HOME"
+        printf '[source.crates-io]\nreplace-with="nix"\n[source.nix]\nlocal-registry="%s"\n' \
+          ${project.projections.cargo} > "$CARGO_HOME/config.toml"
+        version=$(jq -r '.roots[] | select(.name == "ripgrep") | .version' \
+          ${project.projections.cargo.catalog})
+        cargo install --offline --quiet --root "$out" --version "=$version" ripgrep
+        "$out/bin/rg" --version | grep '^ripgrep 14.1.1'
+        printf 'one\nneedle\nthree\n' > haystack
+        test "$("$out/bin/rg" --count needle haystack)" = 1
+      '';
+
   # A developer's loop on ripgrep through the cargo wrapper, offline: build,
   # run, test, rust-analyzer, and a new dependency that Cargo.lock lacks. The
   # lockfile stays outside ripgrep's tree, named by CARGO_PURIFIER_LOCKFILE.

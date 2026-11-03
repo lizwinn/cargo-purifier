@@ -21,6 +21,8 @@
   # The cargo-purifier package that runs the prefetch, or null when the
   # command runs outside it.
   tools,
+  sharedSource ? null,
+  repositoryTools ? ../../tools,
 }:
 let
   pkgs = import nixpkgs { inherit system; };
@@ -31,6 +33,8 @@ let
       src
       lockFile
       cargoLock
+      sharedSource
+      repositoryTools
       ;
   };
 in

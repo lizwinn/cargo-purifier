@@ -114,7 +114,12 @@ let
   isRegistry = source: lib.hasPrefix "registry+" source || lib.hasPrefix "sparse+" source;
   isGit = source: lib.hasPrefix "git+" source;
 
-  sourced = lib.filter (package: package ? source) packages;
+  supplied =
+    package:
+    lib.any (entry: entry.name == package.name && entry.version == package.version) (
+      checked.provided or [ ]
+    );
+  sourced = lib.filter (package: package ? source && !(supplied package)) packages;
   cratesIoPackages = lib.filter (package: package.source == cratesIo) sourced;
   registryPackages = lib.filter (
     package: isRegistry package.source && package.source != cratesIo
@@ -216,6 +221,8 @@ let
 in
 {
   purifier = "cargo-purifier";
+  projectInputs = checked.projectInputs or [ ];
+  provided = checked.provided or [ ];
   entries = cratesIoEntries ++ registryEntries ++ gitEntries;
   outputs = lib.mapAttrs (
     packageName: info: info // { version = versionOf packageName; }

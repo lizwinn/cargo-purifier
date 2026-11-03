@@ -13,6 +13,9 @@
   lockFile,
   cargoLock ? src + "/Cargo.lock",
   package,
+  repository ? false,
+  sharedSource ? null,
+  repositoryTools ? ../../tools,
 }:
 let
   pkgs = import nixpkgs { inherit system; };
@@ -20,7 +23,22 @@ let
     inherit (pkgs) lib;
     inherit src lockFile cargoLock;
   };
+  purifier =
+    if sharedSource == null then
+      null
+    else
+      import (sharedSource + "/default.nix") { inherit (pkgs) lib; };
   project = import ./project.nix {
+    inherit purifier repositoryTools;
+    inherit (pkgs) python3;
+    dependencies =
+      if (lock.projectInputs or [ ]) == [ ] then
+        [ ]
+      else
+        purifier.lockedProjectInputs {
+          inputs = lock.projectInputs;
+          inherit system;
+        };
     inherit (pkgs)
       lib
       stdenv
@@ -33,4 +51,4 @@ let
     inherit (lock) entries;
   };
 in
-project.release.${package}
+if repository then project.projections.cargo else project.release.${package}

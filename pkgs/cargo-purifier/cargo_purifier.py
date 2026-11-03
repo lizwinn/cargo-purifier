@@ -53,7 +53,10 @@ class Failure(Exception):
 
 
 def run(command, capture=True, cwd=None):
-    result = subprocess.run(command, check=True, text=True, capture_output=capture, cwd=cwd)
+    environment = dict(os.environ, CARGO_PURIFIER="0")
+    if command[0] == "cargo" and environment.get("CARGO_PURIFIER_CAPTURE_CONFIG"):
+        command = [command[0], "--config", environment["CARGO_PURIFIER_CAPTURE_CONFIG"], *command[1:]]
+    result = subprocess.run(command, check=True, text=True, capture_output=capture, cwd=cwd, env=environment)
     return result.stdout if capture else None
 
 
@@ -271,16 +274,52 @@ def workspace_root(manifest_path):
     return Path(root_manifest).parent, root_manifest
 
 
+def input_adapter():
+    directory = os.environ.get("CARGO_PURIFIER_TOOLS_DIR")
+    if directory is None:
+        directory = str(Path(__file__).resolve().parents[2] / "tools")
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import cargo_cli_inputs
+    return cargo_cli_inputs
+
+
+def previous_lock(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def input_state(options, root, previous):
+    if (not previous.get("projectInputs") and not getattr(options, "input", None)
+            and not getattr(options, "no_inputs", False)):
+        return None
+    saved = getattr(options, "_input_state", None)
+    return saved if saved is not None else input_adapter().resolve(options, root, previous)
+
+
 def lock(options):
     root, root_manifest = workspace_root(options.manifest_path)
     workspace = ["--manifest-path", root_manifest]
     cargo_lock_path = cargo_lock_of(options, root)
+    lock_path = lock_path_of(options, root)
+    previous = previous_lock(lock_path)
+    state = input_state(options, root, previous)
+    configuration = CargoConfig(root)
+    cargo = os.environ.get("CARGO_PURIFIER_REAL_CARGO", "cargo")
+    original_home = cargo_home()
+    context = (input_adapter().native_capture(root, state, configuration, cargo, original_home)
+               if state is not None else contextlib.nullcontext(None))
 
-    with cargo_lock_in_tree(root, cargo_lock_path):
+    with cargo_lock_in_tree(root, cargo_lock_path), context as capture_home:
         # Brings Cargo.lock up to date with the manifests, changing no more
         # than it must, and downloads what it names. Its output goes to the
         # terminal.
-        run(["cargo", "fetch", *workspace], capture=False, cwd=root)
+        if state is None:
+            run(["cargo", "fetch", *workspace], capture=False, cwd=root)
+        else:
+            input_adapter().fetch([cargo, "fetch", *workspace], root, capture_home, state, cargo)
         metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked",
                                    *workspace], cwd=root))
     members = set(metadata["workspace_members"])
@@ -360,8 +399,13 @@ def lock(options):
         "registries": registries,
         "packages": packages,
     }
+    if state is not None and state['inputs']:
+        result['projectInputs'] = state['inputs']
+        result['provided'] = [{'name': entry['name'], 'version': entry['version']} for entry in state['entries']]
     result["contentHash"] = content_hash(result)
     lock_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    if state is not None:
+        input_adapter().prune_roots(state)
     print(f"cargo-purifier: wrote {lock_path}", file=sys.stderr)
 
 
@@ -370,7 +414,13 @@ def update(options):
     of the result."""
     root, root_manifest = workspace_root(options.manifest_path)
     named = [argument for package in options.packages for argument in ("--package", package)]
-    with cargo_lock_in_tree(root, cargo_lock_of(options, root)):
+    options.refresh_inputs = True
+    state = input_state(options, root, previous_lock(lock_path_of(options, root)))
+    options._input_state = state
+    cargo = os.environ.get("CARGO_PURIFIER_REAL_CARGO", "cargo")
+    context = (input_adapter().native_capture(root, state, CargoConfig(root), cargo, cargo_home())
+               if state is not None else contextlib.nullcontext(None))
+    with cargo_lock_in_tree(root, cargo_lock_of(options, root)), context:
         run(["cargo", "update", "--manifest-path", root_manifest, *named], capture=False, cwd=root)
     lock(options)
 
@@ -411,7 +461,7 @@ def crate_contents(crate_bytes):
         return manifest, readme_text
 
 
-def publish_metadata(manifest, readme_text, target_index):
+def publish_metadata(manifest, readme_text, target_index, projected=()):
     """The JSON part of a publish request, as cargo builds it from the
     crate's normalized Cargo.toml."""
     package = manifest["package"]
@@ -432,7 +482,8 @@ def publish_metadata(manifest, readme_text, target_index):
                 "version_req": version_req(spec["version"]),
                 "target": target,
                 "kind": kind,
-                "registry": None if index == target_index else index,
+                "registry": None if index == target_index or
+                    (spec.get("package", key), spec["version"].removeprefix('=')) in projected else index,
                 "explicit_name_in_toml": key if "package" in spec else None,
             })
 
@@ -473,13 +524,17 @@ def publish_body(metadata, crate_bytes):
 
 
 def nix_build(expression, *args):
-    """nix-build of one of the purifier's tool expressions, with the nixpkgs
-    and system this command was built with."""
+    """Realize the tool expression with explicit, packaged integration paths."""
+    extra = []
+    if os.environ.get("CARGO_PURIFIER_SHARED_SOURCE"):
+        extra += ["--arg", "sharedSource", path_arg(Path(os.environ["CARGO_PURIFIER_SHARED_SOURCE"]))]
+    if os.environ.get("CARGO_PURIFIER_TOOLS_DIR"):
+        extra += ["--arg", "repositoryTools", path_arg(Path(os.environ["CARGO_PURIFIER_TOOLS_DIR"]))]
     return run([
         "nix-build", os.path.join(os.environ["CARGO_PURIFIER_NIX_LIB"], expression),
         "--arg", "nixpkgs", os.environ["CARGO_PURIFIER_NIXPKGS"],
         "--argstr", "system", os.environ["CARGO_PURIFIER_SYSTEM"],
-        *args,
+        *extra, *args,
     ]).strip()
 
 
@@ -548,6 +603,8 @@ def publish(options):
     root, _ = workspace_root(options.manifest_path)
     config = CargoConfig(root)
 
+    repository = None
+    projected = getattr(options, '_projected', ())
     if options.crate:
         crate_path = Path(options.crate)
     else:
@@ -562,6 +619,13 @@ def publish(options):
             package = names[0]
         print(f"cargo-purifier: packaging {package} with Nix", file=sys.stderr)
         crate_path = nix_release(root, lock_path, cargo_lock, package)
+        if lock_data.get('projectInputs'):
+            repository = Path(nix_build(
+                'tool-release.nix', '--no-out-link', '--arg', 'src', path_arg(root),
+                '--arg', 'lockFile', path_arg(lock_path), '--arg', 'cargoLock', path_arg(cargo_lock),
+                '--argstr', 'package', package, '--arg', 'repository', 'true'))
+            catalog = json.loads((repository / '.catalog').read_text())
+            projected = {(entry['name'], entry['version']) for entry in catalog['packages']}
     crate_bytes = crate_path.read_bytes()
 
     if options.registry:
@@ -580,7 +644,7 @@ def publish(options):
         target_index = CRATES_IO_INDEX
 
     manifest, readme_text = crate_contents(crate_bytes)
-    metadata = publish_metadata(manifest, readme_text, target_index)
+    metadata = publish_metadata(manifest, readme_text, target_index, projected)
     print(f"cargo-purifier: {crate_path} is {metadata['name']} {metadata['vers']}", file=sys.stderr)
     if options.dry_run:
         print(json.dumps(metadata, indent=2, sort_keys=True))
@@ -588,6 +652,53 @@ def publish(options):
     if not token:
         raise Failure("no token for the registry; run `cargo login`, or set CARGO_REGISTRY_TOKEN "
                       "or CARGO_REGISTRIES_<NAME>_TOKEN")
+
+    if repository is not None:
+        from types import SimpleNamespace
+        archives = {(entry['name'], entry['version']): repository / entry['archive']
+                    for entry in catalog['packages']}
+        visited = set()
+        ordered = []
+        def visit(coordinate):
+            if coordinate in visited:
+                return
+            visited.add(coordinate)
+            data = archives[coordinate].read_bytes()
+            document, readme = crate_contents(data)
+            native = publish_metadata(document, readme, target_index, projected)
+            for dependency in native['deps']:
+                child = dependency['name'], dependency['version_req'].removeprefix('=')
+                if child in archives:
+                    visit(child)
+            ordered.append(archives[coordinate])
+        visit((metadata['name'], metadata['vers']))
+        for archive in ordered:
+            publish(SimpleNamespace(**{**vars(options), 'crate': str(archive),
+                                       '_projected': projected, '_reuse': True}))
+        return
+
+    if getattr(options, '_reuse', False):
+        input_adapter()
+        from cargo_capture import Registry
+        from cargo_repository import prefix
+        with tempfile.TemporaryDirectory(prefix='cargo-publication-') as temporary:
+            registry = Registry(target_index, token, temporary)
+            try:
+                rows = [json.loads(line) for line in registry.read(prefix(metadata['name']) + '/' +
+                                                                  metadata['name'].lower()).splitlines() if line]
+            except (FileNotFoundError, urllib.error.HTTPError) as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code != 404:
+                    raise
+                rows = []
+            matches = [row for row in rows if row['vers'] == metadata['vers']]
+            if matches:
+                record = matches[0]
+                registry.records[(metadata['name'], metadata['vers'])] = record
+                if record['cksum'] != hashlib.sha256(crate_bytes).hexdigest() or \
+                        registry.download(metadata['name'], metadata['vers']) != crate_bytes:
+                    raise Failure(f"the registry already contains different bytes for {metadata['name']} {metadata['vers']}")
+                print(f"cargo-purifier: reusing {metadata['name']} {metadata['vers']}", file=sys.stderr)
+                return
 
     request = urllib.request.Request(
         api.rstrip("/") + "/api/v1/crates/new",
@@ -611,6 +722,84 @@ def publish(options):
     print(f"cargo-purifier: published {metadata['name']} {metadata['vers']}", file=sys.stderr)
 
 
+
+def native_command(options):
+    root = Path(options.root).resolve()
+    arguments = options.arguments
+    if arguments[:1] == ["--"]:
+        arguments = arguments[1:]
+    lock_path = lock_path_of(options, root)
+    cargo_lock = cargo_lock_of(options, root)
+    data = checked_lock(cargo_lock, lock_path)
+    adapter = input_adapter()
+    state = adapter.resolve(options, root, data)
+    cargo = options.native_cargo
+    subcommand = options.subcommand
+    edits = subcommand in {"add", "remove", "rm", "update", "generate-lockfile"}
+    reads = subcommand in {"build", "b", "check", "c", "run", "r", "test", "t", "bench",
+                          "doc", "d", "clippy", "rustc", "rustdoc", "tree", "metadata", "package", "fix"}
+    if not reads and not edits:
+        return subprocess.call([cargo, *arguments], env=dict(os.environ, CARGO_PURIFIER="0"))
+    with cargo_lock_in_tree(root, cargo_lock):
+        if edits:
+            if subcommand == "add":
+                candidates = {}
+                for entry in state['entries']:
+                    candidates.setdefault(entry['name'], []).append(entry)
+                rewritten = []
+                skip_value = False
+                for argument in arguments:
+                    if skip_value:
+                        rewritten.append(argument)
+                        skip_value = False
+                        continue
+                    if argument in {"--package", "-p", "--features", "-F", "--rename", "--target",
+                                    "--manifest-path", "--registry", "--path", "--git", "--branch", "--tag", "--rev"}:
+                        skip_value = True
+                    name, separator, requirement = argument.partition('@')
+                    choices = candidates.get(name, [])
+                    if len(choices) == 1:
+                        argument = name + '@=' + choices[0]['version']
+                    elif choices:
+                        from cargo_graph import VersionSelector
+                        with tempfile.TemporaryDirectory(prefix="cargo-add-selector-") as temporary:
+                            selector = VersionSelector(cargo, dict(os.environ, CARGO_PURIFIER="0",
+                                                       CARGO_HOME=temporary + "/home"), Path(temporary) / "index")
+                            selected = selector.select(requirement if separator else "*",
+                                                       [entry['sourceVersion'] for entry in choices])
+                        matches = [entry for entry in choices if entry['sourceVersion'] == selected]
+                        if len(matches) != 1:
+                            raise Failure(f"ambiguous Nix-provided source for {name} {selected}")
+                        argument = name + '@=' + matches[0]['version']
+                    rewritten.append(argument)
+                arguments = rewritten
+            with adapter.native_capture(root, state, CargoConfig(root), cargo, cargo_home(), mutation=True):
+                command = [cargo, "--config", os.environ["CARGO_PURIFIER_CAPTURE_CONFIG"], *arguments]
+                subprocess.run(command, env=dict(os.environ, CARGO_PURIFIER="0"), check=True)
+            return 0
+        directory = root / "target/cargo-purifier"
+        directory.mkdir(parents=True, exist_ok=True)
+        vendor = Path(nix_build(
+            "tool-vendor.nix", "--arg", "src", path_arg(root),
+            "--arg", "lockFile", path_arg(lock_path),
+            "--arg", "cargoLock", path_arg(cargo_lock),
+            "--out-link", str(directory / "vendor")))
+        configuration = directory / "config.toml"
+        configuration.write_text((vendor / ".cargo/config.toml").read_text()
+                                 .replace('"cargo-vendor-dir"', json.dumps(str(vendor)))
+                                 .replace('@vendor@', str(vendor)))
+        from cargo_inputs import borrowed_manifests
+        with borrowed_manifests(root, state['entries'], cargo):
+            command = [cargo, "--config", str(configuration)]
+            validation = subprocess.run([*command, "metadata", "--offline", "--locked", "--format-version", "1"],
+                                        cwd=root, env=dict(os.environ, CARGO_PURIFIER="0"),
+                                        text=True, capture_output=True)
+            if validation.returncode:
+                sys.stderr.write(validation.stderr)
+                raise Failure("the locked Cargo graph changed; run cargo-purifier lock")
+            return subprocess.call([*command, "--offline", *arguments],
+                                   env=dict(os.environ, CARGO_PURIFIER="0"))
+
 def main(argv):
     args = argv[1:]
     # cargo runs an external subcommand with the subcommand's name first.
@@ -627,11 +816,25 @@ def main(argv):
         command.add_argument("--manifest-path", help="a Cargo.toml of the workspace")
         command.add_argument("--lockfile", help="the purifier lockfile, when it lives outside the workspace")
         command.add_argument("--tool-lockfile", help="Cargo.lock, when a copy outside the workspace takes its place")
+    for command in (locker, updater):
+        command.add_argument("--input", action="append", help="a Nix project exporting Cargo crates")
+        command.add_argument("--no-inputs", action="store_true", help="remove Nix project input pins")
+        command.add_argument("--refresh-inputs", action="store_true", help="advance the Nix source pins")
     publisher.add_argument("-p", "--package", help="the workspace package to publish")
     publisher.add_argument("--registry", help="a registry configured in cargo's configuration; crates.io by default")
     publisher.add_argument("--crate", help="a .crate file to upload instead of the one Nix packages")
     publisher.add_argument("--dry-run", action="store_true", help="print the publish metadata and upload nothing")
+    native = commands.add_parser("_cargo", help=argparse.SUPPRESS)
+    native.add_argument("--root", required=True)
+    native.add_argument("--native-cargo", required=True)
+    native.add_argument("--subcommand", required=True)
+    native.add_argument("--lockfile")
+    native.add_argument("--tool-lockfile")
+    native.add_argument("arguments", nargs=argparse.REMAINDER)
     options = parser.parse_args(args)
+    if options.command == "_cargo":
+        raise SystemExit(native_command(options))
+
     {"lock": lock, "update": update, "prefetch": prefetch, "publish": publish}[options.command](options)
 
 

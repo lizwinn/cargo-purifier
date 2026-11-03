@@ -15,6 +15,22 @@ permissions:
   contents: read
 
 jobs:
+  composition:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build the Cargo integration
+        run: nix build --out-link "$RUNNER_TEMP/cargo-tools"
+      - name: Compose, edit, build, publish, and consume with ordinary Cargo
+        run: |
+          nix shell 'nixpkgs#python3' -c \
+            python3 tests/composition-native.py "$RUNNER_TEMP/cargo-tools"
+
   check:
     strategy:
       fail-fast: false
