@@ -111,7 +111,7 @@ def cargo_lock_in_tree(root, cargo_lock):
             tree.write_bytes(kept)
 
 
-def checked_lock(cargo_lock, path):
+def checked_lock(cargo_lock, path, mutation=False):
     """The purifier lockfile at `path`, refused when it is missing,
     malformed, edited by hand, or made from another Cargo.lock than
     `cargo_lock`."""
@@ -128,7 +128,7 @@ def checked_lock(cargo_lock, path):
         raise Failure(f"{path} was changed after `cargo-purifier lock` wrote it. {fix}")
     if not cargo_lock.exists():
         raise Failure(f"{cargo_lock} is missing. Run `cargo-purifier lock` first.")
-    if lock.get("cargoLock") != sri_sha256(cargo_lock.read_bytes()):
+    if not mutation and lock.get("cargoLock") != sri_sha256(cargo_lock.read_bytes()):
         raise Failure(f"{path} was made from a different Cargo.lock. Run `cargo-purifier lock` and commit both files.")
     return lock
 
@@ -322,6 +322,10 @@ def lock(options):
             input_adapter().fetch([cargo, "fetch", *workspace], root, capture_home, state, cargo)
         metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked",
                                    *workspace], cwd=root))
+        if state is not None and state['inputs']:
+            from cargo_inputs import portable_lock
+            native_lock = root / 'Cargo.lock'
+            native_lock.write_bytes(portable_lock(native_lock.read_bytes(), state['entries']))
     members = set(metadata["workspace_members"])
     packages = {}
     for package in metadata["packages"]:
@@ -401,7 +405,6 @@ def lock(options):
     }
     if state is not None and state['inputs']:
         result['projectInputs'] = state['inputs']
-        result['provided'] = [{'name': entry['name'], 'version': entry['version']} for entry in state['entries']]
     result["contentHash"] = content_hash(result)
     lock_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     if state is not None:
@@ -730,7 +733,8 @@ def native_command(options):
         arguments = arguments[1:]
     lock_path = lock_path_of(options, root)
     cargo_lock = cargo_lock_of(options, root)
-    data = checked_lock(cargo_lock, lock_path)
+    edits = options.subcommand in {"add", "remove", "rm", "update", "generate-lockfile"}
+    data = checked_lock(cargo_lock, lock_path, mutation=edits)
     adapter = input_adapter()
     state = adapter.resolve(options, root, data)
     cargo = options.native_cargo
@@ -776,6 +780,9 @@ def native_command(options):
             with adapter.native_capture(root, state, CargoConfig(root), cargo, cargo_home(), mutation=True):
                 command = [cargo, "--config", os.environ["CARGO_PURIFIER_CAPTURE_CONFIG"], *arguments]
                 subprocess.run(command, env=dict(os.environ, CARGO_PURIFIER="0"), check=True)
+            from cargo_inputs import portable_lock
+            native_lock = root / "Cargo.lock"
+            native_lock.write_bytes(portable_lock(native_lock.read_bytes(), state["entries"]))
             return 0
         directory = root / "target/cargo-purifier"
         directory.mkdir(parents=True, exist_ok=True)
@@ -788,17 +795,22 @@ def native_command(options):
         configuration.write_text((vendor / ".cargo/config.toml").read_text()
                                  .replace('"cargo-vendor-dir"', json.dumps(str(vendor)))
                                  .replace('@vendor@', str(vendor)))
-        from cargo_inputs import borrowed_manifests
-        with borrowed_manifests(root, state['entries'], cargo):
-            command = [cargo, "--config", str(configuration)]
-            validation = subprocess.run([*command, "metadata", "--offline", "--locked", "--format-version", "1"],
-                                        cwd=root, env=dict(os.environ, CARGO_PURIFIER="0"),
-                                        text=True, capture_output=True)
-            if validation.returncode:
-                sys.stderr.write(validation.stderr)
-                raise Failure("the locked Cargo graph changed; run cargo-purifier lock")
-            return subprocess.call([*command, "--offline", *arguments],
-                                   env=dict(os.environ, CARGO_PURIFIER="0"))
+        from cargo_inputs import borrowed_manifests, hydrate_lock
+        saved = (root / "Cargo.lock").read_bytes()
+        try:
+            with borrowed_manifests(root, state['entries'], cargo):
+                hydrate_lock(root, vendor, cargo, configuration, state["entries"])
+                command = [cargo, "--config", str(configuration)]
+                validation = subprocess.run([*command, "metadata", "--offline", "--locked", "--format-version", "1"],
+                                            cwd=root, env=dict(os.environ, CARGO_PURIFIER="0"),
+                                            text=True, capture_output=True)
+                if validation.returncode:
+                    sys.stderr.write(validation.stderr)
+                    raise Failure("the locked Cargo graph changed; run cargo-purifier lock")
+                return subprocess.call([*command, "--offline", *arguments],
+                                       env=dict(os.environ, CARGO_PURIFIER="0"))
+        finally:
+            (root / "Cargo.lock").write_bytes(saved)
 
 def main(argv):
     args = argv[1:]

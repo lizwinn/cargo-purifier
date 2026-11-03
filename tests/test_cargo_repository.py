@@ -83,21 +83,41 @@ class NativeRepository(unittest.TestCase):
             cargo_inputs.prepare_vendor(base, [{'repository': str(output), 'catalog': str(root / 'catalog.json')}], prepared, cargo)
             config = root / 'prepared-config.toml'
             config.write_text((prepared / '.cargo/config.toml').read_text().replace('@vendor@', str(prepared)))
-            cargo_inputs.materialize(app, prepared, cargo)
+            cargo_inputs.materialize(app, prepared, cargo, check=False)
             subprocess.run([cargo, '--config', str(config), 'generate-lockfile', '--offline', '--quiet'],
                            cwd=app, env=environment, check=True)
             entries = json.loads((prepared / '.provided.json').read_text())
-            bare = cargo_inputs.lock_checksums((app / 'Cargo.lock').read_bytes(), entries, strip=True)
+            bare = cargo_inputs.portable_lock((app / 'Cargo.lock').read_bytes(), entries)
             self.assertNotIn('checksum', bare.decode())
             parsed_lock = repository.tomllib.loads(bare.decode())
-            self.assertTrue(all('source' not in package for package in parsed_lock['package']))
+            self.assertEqual([package['name'] for package in parsed_lock['package']], ['incoming'])
             (app / 'Cargo.lock').write_bytes(bare)
             (app / 'Cargo.toml').write_text(original)
             cargo_inputs.materialize(app, prepared, cargo)
             result = subprocess.check_output([cargo, '--config', str(config), 'run', '--offline', '--locked', '--quiet'],
                                              cwd=app, env=environment, text=True)
             self.assertEqual(result, '42\n')
-            self.assertEqual(cargo_inputs.lock_checksums((app / 'Cargo.lock').read_bytes(), entries, strip=True), bare)
+            self.assertEqual(cargo_inputs.portable_lock((app / 'Cargo.lock').read_bytes(), entries), bare)
+            # Another Nix platform may give the supplied graph another identity.
+            # Reconstruct its native records without changing the saved lock.
+            alternate = root / 'alternate-repository'
+            alternate_catalog = root / 'alternate-catalog.json'
+            repository.project({'identity': hashlib.sha256(b'another-Nix-platform').hexdigest(),
+                                'src': str(source)}, alternate, alternate_catalog, cargo)
+            alternate_vendor = root / 'alternate-vendor'
+            cargo_inputs.prepare_vendor(base, [{'repository': str(alternate),
+                                               'catalog': str(alternate_catalog)}], alternate_vendor, cargo)
+            alternate_entries = json.loads((alternate_vendor / '.provided.json').read_text())
+            self.assertNotEqual(entries[0]['version'], alternate_entries[0]['version'])
+            (app / 'Cargo.toml').write_text(original)
+            (app / 'Cargo.lock').write_bytes(bare)
+            cargo_inputs.materialize(app, alternate_vendor, cargo)
+            config.write_text((alternate_vendor / '.cargo/config.toml').read_text()
+                              .replace('@vendor@', str(alternate_vendor)))
+            self.assertEqual(subprocess.check_output(
+                [cargo, '--config', str(config), 'run', '--offline', '--locked', '--quiet'],
+                cwd=app, env=environment, text=True), '42\n')
+            self.assertEqual(cargo_inputs.portable_lock((app / 'Cargo.lock').read_bytes(), alternate_entries), bare)
             # An ordinary registry parent requests unavailable version99.
             # Cargo receives its original bytes, while its index binds the
             # transitive dependency to the immutable Nix package.

@@ -116,7 +116,7 @@ def prepare_vendor(base, views, out, cargo):
     (out / 'Cargo.lock').write_bytes(lock_checksums((base / 'Cargo.lock').read_bytes(), entries))
 
 
-def materialize(root, vendor, cargo):
+def materialize(root, vendor, cargo, check=True):
     root, vendor = Path(root).resolve(), Path(vendor).resolve()
     entries = json.loads((vendor / '.provided.json').read_text())
     candidates = candidates_of(entries)
@@ -152,6 +152,11 @@ def materialize(root, vendor, cargo):
                 manifests.add(workspace)
         lock = root / 'Cargo.lock'
         lock.write_bytes(lock_checksums(lock.read_bytes(), entries))
+        configuration = temporary / 'config.toml'
+        configuration.write_text((vendor / '.cargo/config.toml').read_text()
+                                 .replace('"cargo-vendor-dir"', json.dumps(str(vendor)))
+                                 .replace('@vendor@', str(vendor)))
+        hydrate_lock(root, vendor, cargo, configuration, entries, check)
 
 
 
@@ -241,6 +246,64 @@ def borrowed_manifests(root, entries, cargo, mutation=False):
             for path, original in originals.items():
                 changed = path.read_bytes()
                 path.write_bytes(restore_bindings(original, changed, entries) if mutation else original)
+
+
+
+
+def portable_lock(data, entries):
+    """Keep ordinary Cargo records; Nix supplies the other package records."""
+    document = tomlkit.parse(data.decode())
+    supplied = {(entry['name'], entry['version']) for entry in entries}
+    packages = list(document.get('package', []))
+    by_name = {}
+    for package in packages:
+        by_name.setdefault(str(package['name']), []).append(package)
+    retained = tomlkit.aot()
+    for package in packages:
+        coordinate = str(package['name']), str(package['version'])
+        if coordinate in supplied and 'source' not in package:
+            continue
+        dependencies = []
+        for dependency in package.get('dependencies', []):
+            parts = str(dependency).split(' ')
+            choices = by_name.get(parts[0], [])
+            if len(parts) > 1:
+                choices = [choice for choice in choices if str(choice['version']) == parts[1]]
+            if len(choices) == 1 and 'source' not in choices[0] and \
+                    (str(choices[0]['name']), str(choices[0]['version'])) in supplied:
+                continue
+            dependencies.append(dependency)
+        if dependencies:
+            package['dependencies'] = dependencies
+        else:
+            package.pop('dependencies', None)
+        retained.append(package)
+    document['package'] = retained
+    if 'unused' in document.get('patch', {}):
+        remaining = tomlkit.aot()
+        supplied_names = {entry['name'] for entry in entries}
+        for patch in document['patch']['unused']:
+            if str(patch['name']) in supplied_names and '-nix.h' in str(patch['version']):
+                continue
+            remaining.append(patch)
+        if remaining:
+            document['patch']['unused'] = remaining
+        else:
+            document.pop('patch')
+    return tomlkit.dumps(document).encode()
+
+
+def hydrate_lock(root, vendor, cargo, configuration, entries, check=True):
+    """The vendor contains only captured ordinary versions and Nix inputs."""
+    root = Path(root)
+    lock = root / 'Cargo.lock'
+    original = lock.read_bytes()
+    environment = dict(os.environ, CARGO_PURIFIER='0')
+    subprocess.run([cargo, '--config', str(configuration), 'generate-lockfile', '--offline'],
+                   cwd=root, env=environment, check=True)
+    if check and tomllib.loads(portable_lock(lock.read_bytes(), entries).decode()) != tomllib.loads(portable_lock(original, entries).decode()):
+        lock.write_bytes(original)
+        raise ValueError('the locked Cargo graph changed; run cargo-purifier lock')
 
 
 if __name__ == '__main__':

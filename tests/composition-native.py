@@ -51,13 +51,16 @@ with tempfile.TemporaryDirectory(prefix='cargo-composition-') as temporary:
     lock = json.loads(first)
     assert lock['projectInputs'][0]['narHash']
     assert not lock['git'] and not lock['registries']
-    assert lock['provided']
+    assert not lock.get('provided')
+    assert '-nix.h' not in (consumer / 'Cargo.lock').read_text()
     assert 'checksum' not in (consumer / 'Cargo.lock').read_text()
     run(tools / 'bin/cargo-purifier', 'lock', cwd=consumer, env=environment)
     assert lock_path.read_bytes() == first, 'relocking moved a Nix source'
     run(tools / 'bin/cargo-purifier', 'prefetch', cwd=consumer, env=environment)
     expected = 'hello from 42 crates\n'
+    saved_native_lock = (consumer / 'Cargo.lock').read_bytes()
     assert run(tools / 'bin/cargo', 'run', '--quiet', cwd=consumer, env=environment) == expected
+    assert (consumer / 'Cargo.lock').read_bytes() == saved_native_lock
     assert (consumer / 'Cargo.toml').read_text() == original
     run(tools / 'bin/cargo', 'remove', 'greet', cwd=consumer, env=environment)
     run(tools / 'bin/cargo-purifier', 'lock', cwd=consumer, env=environment)

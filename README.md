@@ -140,7 +140,9 @@ cargo run
 
 The input exports `projections.cargo` from a package built with
 `buildCargoProject`. Its Nix source pin covers the supplied crates; their
-download hashes stay out of both lockfiles. Existing dependency requirements
+package records stay out of `Cargo.lock`, and their download hashes stay out
+of the purifier lock. Cargo receives a temporary native lock reconstructed
+from the current Nix inputs and captured ordinary dependencies. Existing dependency requirements
 are bound automatically, and the working manifest keeps its original versions.
 Use `--refresh-inputs` to advance source pins or `--no-inputs` to remove them.
 

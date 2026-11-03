@@ -136,9 +136,12 @@ let
     prePatch = ''
       cp ${cargoLock} ${lib.escapeShellArg workspace}/Cargo.lock
       chmod u+w ${lib.escapeShellArg workspace}/Cargo.lock
+    '';
+    postPatch = ''
       ${lib.optionalString (dependencies != [ ]) ''
         ${lib.getExe inputPython} ${repositoryTools}/cargo_inputs.py materialize \
           ${lib.escapeShellArg workspace} ${vendor} ${lib.getExe rustPlatform.rust.cargo}
+        cp ${lib.escapeShellArg workspace}/Cargo.lock "$cargoDepsCopy/Cargo.lock"
       ''}
     '';
   }
