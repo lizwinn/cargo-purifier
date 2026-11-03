@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs the test suite on both systems the flake supports, on every push to
-# main and on every pull request. The flake's checks include the purifier
+# every branch and on every pull request. The flake's checks include the purifier
 # contract's conformance checks that the sandbox can run; the two that need
 # the network or a Nix daemon are the jobs of their names here.
 name: check
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
 
 permissions:
