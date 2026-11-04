@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: nix-purifiers/nix-purifiers.github.io
-          ref: 7f73858397dceb17db4a88ee52715277cb2de892
+          ref: 2c54c482a33e4658ff703156956b35fec52eeb1a
           path: .pages-theme
           persist-credentials: false
       - name: Prepare the project documentation
