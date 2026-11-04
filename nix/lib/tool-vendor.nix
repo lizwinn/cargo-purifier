@@ -11,6 +11,8 @@
   system,
   src,
   lockFile,
+  sharedSource ? null,
+  repositoryTools ? ../../tools,
   cargoLock ? src + "/Cargo.lock",
 }:
 let
@@ -19,15 +21,46 @@ let
     inherit (pkgs) lib;
     inherit src lockFile cargoLock;
   };
+  base = import ./vendor.nix {
+    inherit (pkgs)
+      lib
+      rustPlatform
+      fetchurl
+      fetchgit
+      runCommand
+      ;
+    inherit cargoLock;
+    inherit (lock) entries;
+    provided = lock.provided or [ ];
+  };
+  purifier =
+    if sharedSource == null then
+      null
+    else
+      import (sharedSource + "/default.nix") { inherit (pkgs) lib; };
+  dependencies =
+    if (lock.projectInputs or [ ]) == [ ] then
+      [ ]
+    else
+      purifier.lockedProjectInputs {
+        inputs = lock.projectInputs;
+        inherit system;
+      };
 in
-import ./vendor.nix {
-  inherit (pkgs)
-    lib
-    rustPlatform
-    fetchurl
-    fetchgit
-    runCommand
-    ;
-  inherit cargoLock;
-  inherit (lock) entries;
-}
+if dependencies == [ ] then
+  base
+else
+  import ./vendor-inputs.nix {
+    inherit (pkgs)
+      lib
+      runCommand
+      python3
+      cargo
+      ;
+    inherit
+      purifier
+      base
+      dependencies
+      repositoryTools
+      ;
+  }

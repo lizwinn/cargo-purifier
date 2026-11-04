@@ -8,11 +8,12 @@
 # nix/lib/read-lock.nix documents it. The builder, buildCargoProject, is a
 # package in the scope `pkgs.cargo-purifier`, which the default package
 # overlay adds.
-{ ... }:
+{ closure-inputs, ... }:
 {
 
   overlay = final: prev: {
     cargo-purifier = {
+      sharedLibrarySource = "${closure-inputs.purifier}";
       readLock = import ../../nix/lib/read-lock.nix { lib = final; };
     };
   };

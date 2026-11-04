@@ -27,6 +27,7 @@
   cargoLock,
   # The entries of the workspace's lock in memory.
   entries,
+  provided ? [ ],
 }:
 let
   inherit (builtins) toJSON;
@@ -37,7 +38,9 @@ let
   isRegistry = source: lib.hasPrefix "registry+" source || lib.hasPrefix "sparse+" source;
   isGit = source: lib.hasPrefix "git+" source;
 
-  sourced = lib.filter (package: package ? source) parsed.package;
+  supplied =
+    package: lib.any (entry: entry.name == package.name && entry.version == package.version) provided;
+  sourced = lib.filter (package: package ? source && !(supplied package)) parsed.package;
   importedPackages = lib.filter (package: package.source == cratesIo || isGit package.source) sourced;
 
   # A git source in Cargo.lock ends with `#<commit>`.

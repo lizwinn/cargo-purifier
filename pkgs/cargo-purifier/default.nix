@@ -21,6 +21,7 @@
 }:
 let
   inherit (pkgs) cargo;
+  python = python3.withPackages (packages: [ packages.tomlkit ]);
 in
 stdenvNoCC.mkDerivation {
   pname = "cargo-purifier-command";
@@ -31,15 +32,24 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     install -Dm644 $src $out/libexec/cargo-purifier/cargo_purifier.py
-    makeWrapper ${lib.getExe python3} $out/bin/cargo-purifier \
+    makeWrapper ${lib.getExe python} $out/bin/cargo-purifier \
       --add-flags $out/libexec/cargo-purifier/cargo_purifier.py \
+      --set CARGO_PURIFIER_TOOLS_DIR ${../../tools} \
+      --set-default CARGO_PURIFIER_REAL_CARGO ${lib.getExe cargo} \
+      --set CARGO_PURIFIER_SHARED_SOURCE ${lib.cargo-purifier.sharedLibrarySource} \
+      --prefix PYTHONPATH : ${lib.purifier.projectInputsTool} \
       --prefix PATH : ${
         lib.makeBinPath [
           nix-prefetch-git
           git
         ]
       } \
-      --suffix PATH : ${lib.makeBinPath [ cargo ]} \
+      --suffix PATH : ${
+        lib.makeBinPath [
+          cargo
+          pkgs.rustc
+        ]
+      } \
       --set CARGO_PURIFIER_NIX_LIB ${../../nix/lib} \
       --set CARGO_PURIFIER_NIXPKGS ${path} \
       --set CARGO_PURIFIER_SYSTEM ${stdenv.hostPlatform.system} \

@@ -1,20 +1,36 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs the test suite on both systems the flake supports, on every push to
-# main and on every pull request. The flake's checks include the purifier
+# every branch and on every pull request. The flake's checks include the purifier
 # contract's conformance checks that the sandbox can run; the two that need
 # the network or a Nix daemon are the jobs of their names here.
 name: check
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  composition:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build the Cargo integration
+        run: nix build --out-link "$RUNNER_TEMP/cargo-tools"
+      - name: Compose, edit, build, publish, and consume with ordinary Cargo
+        run: |
+          nix shell 'nixpkgs#python3' -c \
+            python3 tests/composition-native.py "$RUNNER_TEMP/cargo-tools"
+
   check:
     strategy:
       fail-fast: false

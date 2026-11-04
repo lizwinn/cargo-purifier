@@ -96,6 +96,10 @@ writeShellApplication {
       echo "cargo-purifier: Cargo.lock is missing beside an existing purifier lock; run cargo-purifier lock" >&2
       exit 101
     fi
+    if grep -q '"projectInputs"' "$lock"; then
+      exec ${lib.getExe command} _cargo --root "$root" \
+        --native-cargo "$real" --subcommand "$sub" -- "$@"
+    fi
     case "$sub" in
       build | b | check | c | run | r | test | t | bench | doc | d | clippy | rustc | rustdoc | tree | metadata | package | fix) ;;
       *) exec "$real" "$@" ;;

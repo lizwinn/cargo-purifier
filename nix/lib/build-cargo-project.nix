@@ -27,12 +27,14 @@
   fetchgit,
   # lib.purifier, the purifier library: checkLock and entriesFor.
   purifier,
+  python3,
   # lib.cargo-purifier.readLock.
   readLock,
 }:
 {
   # The source tree.
   src,
+  dependencies ? null,
   # The workspace root inside `src`: the directory of the workspace's
   # Cargo.toml and Cargo.lock, when `src` also holds path dependencies
   # outside the workspace.
@@ -70,12 +72,22 @@ import ./project.nix (
       stdenv
       runCommand
       rustPlatform
+      purifier
+      python3
       src
       workspace
       cargoLock
       lock
       doCheck
       ;
+    dependencies =
+      if dependencies != null then
+        dependencies
+      else
+        purifier.lockedProjectInputs {
+          inputs = lock.projectInputs or [ ];
+          system = stdenv.hostPlatform.system;
+        };
     fetchurl = fetchers.fetchurl or fetchurl;
     fetchgit = fetchers.fetchgit or fetchgit;
     entries = purifier.entriesFor stdenv.hostPlatform.system lock;

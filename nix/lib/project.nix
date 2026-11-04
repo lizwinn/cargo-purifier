@@ -26,6 +26,10 @@
   runCommand,
   # The Rust toolchain.
   rustPlatform,
+  purifier ? null,
+  python3 ? null,
+  dependencies ? [ ],
+  repositoryTools ? ../../tools,
   # The fetchers of registry crates and git checkouts.
   fetchurl,
   fetchgit,
@@ -48,13 +52,20 @@
     let
       name = baseNameOf path;
     in
-    !(type == "directory" && name == "target") && !(lib.hasPrefix "result" name)
+    !(
+      type == "directory"
+      && lib.elem name [
+        "target"
+        ".git"
+      ]
+    )
+    && !(lib.hasPrefix "result" name)
   ),
 }:
 let
   inWorkspace = workspace != ".";
 
-  vendor = import ./vendor.nix {
+  baseVendor = import ./vendor.nix {
     inherit
       lib
       rustPlatform
@@ -64,7 +75,27 @@ let
       entries
       cargoLock
       ;
+    provided = lock.provided or [ ];
   };
+
+  vendor =
+    if dependencies == [ ] then
+      baseVendor
+    else
+      import ./vendor-inputs.nix {
+        inherit
+          lib
+          purifier
+          runCommand
+          python3
+          dependencies
+          repositoryTools
+          ;
+        cargo = rustPlatform.rust.cargo;
+        base = baseVendor;
+      };
+  inputPython =
+    if python3 == null then null else python3.withPackages (packages: [ packages.tomlkit ]);
 
   # Runs cargo in the workspace root, when it is not the root of `src`.
   enterWorkspace = lib.optionalString inWorkspace "cd ${lib.escapeShellArg workspace}\n";
@@ -78,6 +109,23 @@ let
     else
       src;
 
+  projections.cargo = import ./cargo-projections.nix {
+    inherit
+      lib
+      purifier
+      runCommand
+      python3
+      workspace
+      dependencies
+      vendor
+      cargoLock
+      entries
+      repositoryTools
+      ;
+    src = filteredSrc;
+    inherit (rustPlatform.rust) cargo rustc;
+  };
+
   # nixpkgs' cargo hooks find Cargo.lock in `cargoRoot`, and build and test
   # in `buildAndTestSubdir`.
   # Every build works on the Cargo.lock this builder was given, which
@@ -88,6 +136,13 @@ let
     prePatch = ''
       cp ${cargoLock} ${lib.escapeShellArg workspace}/Cargo.lock
       chmod u+w ${lib.escapeShellArg workspace}/Cargo.lock
+    '';
+    postPatch = ''
+      ${lib.optionalString (dependencies != [ ]) ''
+        ${lib.getExe inputPython} ${repositoryTools}/cargo_inputs.py materialize \
+          ${lib.escapeShellArg workspace} ${vendor} ${lib.getExe rustPlatform.rust.cargo}
+        cp ${lib.escapeShellArg workspace}/Cargo.lock "$cargoDepsCopy/Cargo.lock"
+      ''}
     '';
   }
   // lib.optionalAttrs inWorkspace {
@@ -117,6 +172,7 @@ let
           pname = name;
           inherit (info) version;
           inherit doCheck;
+          passthru = { inherit projections; };
           cargoBuildFlags = [
             "--package"
             name
@@ -157,22 +213,34 @@ let
     name: info:
     let
       inherit (info) version;
-      drv = cargoRun {
-        pname = "${name}-crate";
-        inherit version;
-        # `cargo package` also builds the packaged crate, from its own
-        # sources and the vendored ones.
-        buildPhase = ''
-          runHook preBuild
-          ${enterWorkspace}cargo package --frozen --package ${lib.escapeShellArg name}
-          runHook postBuild
-        '';
-        installPhase = ''
-          runHook preInstall
-          install -Dm644 target/package/${name}-${version}.crate $out/${name}-${version}.crate
-          runHook postInstall
-        '';
-      };
+      drv =
+        if dependencies != [ ] then
+          runCommand "${name}-projected-crate"
+            {
+              passthru = { inherit projections; };
+            }
+            ''
+              mkdir -p "$out"
+              cp -L ${projections.cargo}/crates/${name}.crate "$out/${name}-${version}.crate"
+            ''
+        else
+          cargoRun {
+            pname = "${name}-crate";
+            passthru = { inherit projections; };
+            inherit version;
+            # `cargo package` also builds the packaged crate, from its own
+            # sources and the vendored ones.
+            buildPhase = ''
+              runHook preBuild
+              ${enterWorkspace}cargo package --frozen --package ${lib.escapeShellArg name}
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              install -Dm644 target/package/${name}-${version}.crate $out/${name}-${version}.crate
+              runHook postInstall
+            '';
+          };
     in
     drv // { crate = "${drv}/${name}-${version}.crate"; };
 in
@@ -191,6 +259,7 @@ in
 
   release = lib.mapAttrs mkRelease lock.outputs;
 
+  inherit projections;
   fetches = lock.entries;
   inherit vendor;
 }
